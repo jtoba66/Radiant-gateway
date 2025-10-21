@@ -7,6 +7,9 @@ const https = require('https');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// Jackal REST endpoint for provider discovery
+const JACKAL_REST_ENDPOINT = 'https://rest.lavenderfive.com:443/jackal';
+
 // Public IPFS gateways to try (in order)
 const IPFS_GATEWAYS = [
   'https://ipfs.io/ipfs',
@@ -23,6 +26,50 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Range'],
   exposedHeaders: ['Content-Length', 'Content-Type', 'Accept-Ranges']
 }));
+
+// Helper: Get active storage providers from Jackal network
+async function getStorageProviders() {
+  try {
+    const url = `${JACKAL_REST_ENDPOINT}/storage/providers`;
+    console.log(`📡 Fetching providers from: ${url}`);
+    
+    const response = await new Promise((resolve, reject) => {
+      https.get(url, (res) => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => {
+          if (res.statusCode === 200) {
+            try {
+              resolve(JSON.parse(data));
+            } catch (e) {
+              reject(new Error('Failed to parse provider response'));
+            }
+          } else {
+            reject(new Error(`HTTP ${res.statusCode}`));
+          }
+        });
+      }).on('error', reject).setTimeout(10000, function() {
+        this.destroy();
+        reject(new Error('Request timeout'));
+      });
+    });
+    
+    if (response && response.providers && Array.isArray(response.providers)) {
+      const providers = response.providers
+        .map(p => p.ip || p.address)
+        .filter(Boolean);
+      
+      console.log(`✅ Found ${providers.length} active providers from blockchain`);
+      return providers;
+    }
+    
+    console.log('⚠️  No providers in response');
+    return [];
+  } catch (err) {
+    console.error('⚠️  Provider discovery failed:', err.message);
+    return [];
+  }
+}
 
 // Helper: Download from URL
 function downloadFromUrl(url) {
@@ -77,12 +124,17 @@ async function downloadFromIPFS(cid) {
 }
 
 // Health check
-app.get('/health', (req, res) => {
+app.get('/health', async (req, res) => {
+  // Try to get providers for health check
+  const providers = await getStorageProviders();
+  
   res.json({ 
     status: 'ok', 
     service: 'radiant-gateway',
     method: 'ipfs-proxy',
-    gateways: IPFS_GATEWAYS.length
+    rest_endpoint: JACKAL_REST_ENDPOINT,
+    ipfs_gateways: IPFS_GATEWAYS.length,
+    active_providers: providers.length
   });
 });
 
@@ -155,5 +207,6 @@ app.listen(PORT, () => {
   console.log(`\n🚀 Radiant Gateway running on port ${PORT}`);
   console.log(`📡 File endpoint: http://localhost:${PORT}/file/{cid}?name={filename}`);
   console.log(`🌐 Using ${IPFS_GATEWAYS.length} IPFS gateways`);
+  console.log(`🔗 Jackal REST: ${JACKAL_REST_ENDPOINT}`);
   console.log(`\n✅ Ready to serve files!\n`);
 });
