@@ -7,9 +7,6 @@ const https = require('https');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Jackal REST endpoint for provider discovery
-const JACKAL_REST_ENDPOINT = 'https://rest.lavenderfive.com:443/jackal';
-
 // Public IPFS gateways to try (in order)
 const IPFS_GATEWAYS = [
   'https://ipfs.io/ipfs',
