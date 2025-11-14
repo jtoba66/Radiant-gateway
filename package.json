@@ -1,12 +1,12 @@
 {
   "name": "radiant-gateway",
-  "version": "1.0.0",
-  "description": "Production gateway for serving files from Jackal decentralized storage network",
-  "main": "radiant-gateway-server.js",
+  "version": "2.2.0",
+  "description": "Production gateway for serving files from Jackal decentralized storage network with Cloudflare integration",
+  "main": "radiant-gateway-grpc.js",
   "scripts": {
-    "start": "node radiant-gateway-server.js",
-    "dev": "nodemon radiant-gateway-server.js",
-    "pm2:start": "pm2 start radiant-gateway-server.js --name radiant-gateway",
+    "start": "node radiant-gateway-grpc.js",
+    "dev": "nodemon radiant-gateway-grpc.js",
+    "pm2:start": "pm2 start radiant-gateway-grpc.js --name radiant-gateway",
     "pm2:stop": "pm2 stop radiant-gateway",
     "pm2:restart": "pm2 restart radiant-gateway",
     "pm2:logs": "pm2 logs radiant-gateway",
@@ -22,7 +22,8 @@
     "gateway",
     "ipfs",
     "blockchain",
-    "radiant"
+    "radiant",
+    "cloudflare"
   ],
   "author": "Radiant Team",
   "license": "MIT",
@@ -41,6 +42,6 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/yourusername/radiant-gateway"
+    "url": "https://github.com/jtoba66/Radiant-gateway"
   }
 }
