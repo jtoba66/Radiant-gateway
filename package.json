@@ -1,20 +1,46 @@
 {
   "name": "radiant-gateway",
   "version": "1.0.0",
-  "description": "Jackal storage gateway for Radiant - Direct RPC version",
-  "main": "gateway-server.js",
+  "description": "Production gateway for serving files from Jackal decentralized storage network",
+  "main": "radiant-gateway-server.js",
   "scripts": {
-    "start": "node gateway-server.js",
-    "dev": "nodemon gateway-server.js"
+    "start": "node radiant-gateway-server.js",
+    "dev": "nodemon radiant-gateway-server.js",
+    "pm2:start": "pm2 start radiant-gateway-server.js --name radiant-gateway",
+    "pm2:stop": "pm2 stop radiant-gateway",
+    "pm2:restart": "pm2 restart radiant-gateway",
+    "pm2:logs": "pm2 logs radiant-gateway",
+    "pm2:monit": "pm2 monit",
+    "test:health": "curl http://localhost:3001/health",
+    "test:cache": "curl http://localhost:3001/cache/stats",
+    "test:providers": "curl http://localhost:3001/providers/health"
   },
+  "keywords": [
+    "jackal",
+    "decentralized",
+    "storage",
+    "gateway",
+    "ipfs",
+    "blockchain",
+    "radiant"
+  ],
+  "author": "Radiant Team",
+  "license": "MIT",
   "dependencies": {
-    "express": "^4.18.2",
-    "cors": "^2.8.5"
+    "@grpc/grpc-js": "^1.14.1",
+    "@grpc/proto-loader": "^0.8.0",
+    "cors": "^2.8.5",
+    "express": "^4.18.2"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
   },
   "engines": {
-    "node": ">=16.0.0"
+    "node": ">=16.0.0",
+    "npm": ">=8.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/radiant-gateway"
   }
 }
