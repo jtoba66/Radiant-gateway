@@ -780,37 +780,9 @@ async function tryProvidersParallel(providers, merkleHex, timeoutMs = PROVIDER_T
 }
 
 /**
- * Download file with request deduplication
- * If same file is requested multiple times, download once and share result
- */
-async function downloadFileWithDedup(merkleHex, rangeHeader = null) {
-  const cacheKey = rangeHeader ? `${merkleHex}:${rangeHeader}` : merkleHex;
-  
-  // Check if request is already in flight
-  if (inflightRequests.has(cacheKey)) {
-    console.log(`🔗 Deduplicating request for ${merkleHex.substring(0, 16)}...`);
-    return await inflightRequests.get(cacheKey);
-  }
-  
-  // Create new download promise
-  const downloadPromise = (async () => {
-    try {
-      return await downloadFile(merkleHex, rangeHeader);
-    } finally {
-      // Remove from inflight after completion
-      inflightRequests.delete(cacheKey);
-    }
-  })();
-  
-  // Track inflight request
-  inflightRequests.set(cacheKey, downloadPromise);
-  
-  return await downloadPromise;
-}
-
-/**
  * 🎯 NEW: Query FindFile() gRPC to find which providers have a specific file
  * Returns array of provider URLs that have this file
+ * MOVED BEFORE downloadFile to fix hoisting issue
  */
 async function findFileProviders(merkleHex) {
   // Check cache first
@@ -861,6 +833,35 @@ async function findFileProviders(merkleHex) {
     console.log(`   ⚠️  FindFile query failed: ${err.message}`);
     return [];
   }
+}
+
+/**
+ * Download file with request deduplication
+ * If same file is requested multiple times, download once and share result
+ */
+async function downloadFileWithDedup(merkleHex, rangeHeader = null) {
+  const cacheKey = rangeHeader ? `${merkleHex}:${rangeHeader}` : merkleHex;
+  
+  // Check if request is already in flight
+  if (inflightRequests.has(cacheKey)) {
+    console.log(`🔗 Deduplicating request for ${merkleHex.substring(0, 16)}...`);
+    return await inflightRequests.get(cacheKey);
+  }
+  
+  // Create new download promise
+  const downloadPromise = (async () => {
+    try {
+      return await downloadFile(merkleHex, rangeHeader);
+    } finally {
+      // Remove from inflight after completion
+      inflightRequests.delete(cacheKey);
+    }
+  })();
+  
+  // Track inflight request
+  inflightRequests.set(cacheKey, downloadPromise);
+  
+  return await downloadPromise;
 }
 
 /**
