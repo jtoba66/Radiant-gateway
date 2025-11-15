@@ -1,6 +1,6 @@
 {
   "name": "radiant-gateway",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "description": "Production gateway for serving files from Jackal decentralized storage network with Cloudflare integration",
   "main": "radiant-gateway-grpc.js",
   "scripts": {
