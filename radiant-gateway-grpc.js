@@ -681,11 +681,15 @@ async function tryProvidersParallel(providers, merkleHex, timeoutMs = PROVIDER_T
     let successFound = false;
     let attemptCount = 0;
     const errors = [];
+    const results = []; // Track all results for attemptDetails
     
     // Launch all provider attempts simultaneously
     providers.forEach(provider => {
       tryProvider(provider, merkleHex, timeoutMs, rangeHeader)
         .then(result => {
+          // Track this result
+          results.push({ provider, success: true, error: null });
+          
           // Skip if we already found valid success
           if (successFound) {
             return;
@@ -709,10 +713,15 @@ async function tryProvidersParallel(providers, merkleHex, timeoutMs = PROVIDER_T
           // Valid response! This is our winner
           successFound = true;
           console.log(`🏆 Race won by: ${provider} (validated ✓)`);
+          
+          // Add attemptDetails for backward compatibility
+          result.attemptDetails = results;
+          
           resolve(result);
         })
         .catch(err => {
           // Track failures
+          results.push({ provider, success: false, error: err.message });
           errors.push({ provider, error: err.message });
           attemptCount++;
           
