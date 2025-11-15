@@ -1,11 +1,11 @@
-// radiant-gateway-grpc.js v2.2.1 - Full Persistence + Smart Racing
+// radiant-gateway-grpc.js v3.0.0 - FindFile Edition
 // Routes Jackal merkle hashes through storage provider network
 // ✅ LRU cache eviction, Range requests, Request deduplication, Health persistence
 // ✅ 16-provider Tier 1, 24hr gRPC caching, Detailed error responses
 // ✅ Smart streaming: Videos always stream, large non-videos force download
 // ✅ Cloudflare hybrid: Small files cached, large files bypass
 // ✅ FULL PERSISTENCE: Metrics, gRPC cache, and all state persists across restarts
-// 🔥 CRITICAL FIX v2.2.1: Replaced Promise.all with validated race condition (~300x faster)
+// 🎯 NEW v3.0.0: FindFile() gRPC query - targets specific providers that have each file
 
 const express = require('express');
 const cors = require('cors');
@@ -31,6 +31,11 @@ const LARGE_FILE_THRESHOLD_MB = parseInt(process.env.LARGE_FILE_THRESHOLD_MB || 
 const SAVE_INTERVAL = parseInt(process.env.SAVE_INTERVAL || '300000'); // 5 minutes
 const DATA_DIR = process.env.DATA_DIR || './data';
 const GRPC_CACHE_TTL = parseInt(process.env.GRPC_CACHE_TTL || '86400000'); // 24 hours
+
+// 🎯 NEW: FindFile configuration
+const USE_FINDFILE = process.env.USE_FINDFILE !== 'false'; // Enable FindFile optimization
+const FINDFILE_TIMEOUT = parseInt(process.env.FINDFILE_TIMEOUT || '3000'); // FindFile query timeout
+const FINDFILE_CACHE_TTL = 3600000; // 1 hour cache for FindFile results
 
 // ==================== FIXED CONFIGURATION ====================
 
@@ -72,6 +77,7 @@ const HEALTH_FILE = path.join(DATA_DIR, 'provider-health.json');
 const CACHE_ACCESS_FILE = path.join(DATA_DIR, 'cache-access-times.json');
 const METRICS_FILE = path.join(DATA_DIR, 'metrics.json');
 const GRPC_CACHE_FILE = path.join(DATA_DIR, 'grpc-provider-cache.json');
+const FINDFILE_CACHE_FILE = path.join(DATA_DIR, 'findfile-cache.json'); // 🎯 NEW
 
 // ==================== RUNTIME STATE ====================
 
@@ -83,6 +89,9 @@ const cacheAccessTimes = new Map(); // merkleHex -> timestamp
 
 // ✅ Request deduplication tracking (in-memory only - intentionally not persisted)
 const inflightRequests = new Map(); // merkleHex -> Promise
+
+// 🎯 NEW: FindFile cache (merkleHex -> provider URLs)
+const findFileCache = new Map(); // merkleHex -> {providers: [], timestamp}
 
 // ✅ gRPC provider cache
 let grpcProviderCache = {
@@ -99,6 +108,9 @@ let metrics = {
   providerSuccesses: 0,
   providerFailures: 0,
   grpcQueries: 0,
+  findFileQueries: 0,    // 🎯 NEW
+  findFileHits: 0,       // 🎯 NEW  
+  findFileFallbacks: 0,  // 🎯 NEW
   startTime: Date.now(),
   errorsByType: {},
   requestTimes: [], // Rolling window of last 100 request times
@@ -233,6 +245,35 @@ function saveGRPCCache() {
 }
 
 /**
+ * 🎯 Load FindFile cache from disk
+ */
+function loadFindFileCache() {
+  try {
+    if (fs.existsSync(FINDFILE_CACHE_FILE)) {
+      const data = JSON.parse(fs.readFileSync(FINDFILE_CACHE_FILE, 'utf8'));
+      Object.entries(data).forEach(([hash, entry]) => {
+        findFileCache.set(hash, entry);
+      });
+      console.log(`✅ Loaded FindFile cache for ${findFileCache.size} files`);
+    }
+  } catch (err) {
+    console.warn('⚠️  Could not load FindFile cache:', err.message);
+  }
+}
+
+/**
+ * 🎯 Save FindFile cache to disk
+ */
+function saveFindFileCache() {
+  try {
+    const data = Object.fromEntries(findFileCache);
+    fs.writeFileSync(FINDFILE_CACHE_FILE, JSON.stringify(data, null, 2));
+  } catch (err) {
+    console.error('❌ Could not save FindFile cache:', err.message);
+  }
+}
+
+/**
  * Save all state to disk
  */
 function saveAllState() {
@@ -240,11 +281,12 @@ function saveAllState() {
   saveCacheAccessTimes();
   saveMetrics();
   saveGRPCCache();
+  saveFindFileCache(); // 🎯 NEW
 }
 
 // ==================== INITIALIZATION ====================
 
-console.log('\n🚀 Initializing Radiant Gateway v2.2.0...\n');
+console.log('\n🚀 Initializing Radiant Gateway v3.0.0 (FindFile Edition)...\n');
 
 // Ensure cache directory exists
 if (CACHE_ENABLED && !fs.existsSync(CACHE_DIR)) {
@@ -257,6 +299,7 @@ loadProviderHealth();
 loadCacheAccessTimes();
 loadMetrics();
 loadGRPCCache();
+loadFindFileCache(); // 🎯 NEW
 
 // Periodic saving
 setInterval(saveAllState, SAVE_INTERVAL);
@@ -766,25 +809,118 @@ async function downloadFileWithDedup(merkleHex, rangeHeader = null) {
 }
 
 /**
+ * 🎯 NEW: Query FindFile() gRPC to find which providers have a specific file
+ * Returns array of provider URLs that have this file
+ */
+async function findFileProviders(merkleHex) {
+  // Check cache first
+  const cached = findFileCache.get(merkleHex);
+  if (cached && (Date.now() - cached.timestamp) < FINDFILE_CACHE_TTL) {
+    console.log(`   📦 FindFile cache hit (${cached.providers.length} providers)`);
+    metrics.findFileHits++;
+    return cached.providers;
+  }
+  
+  try {
+    console.log(`   🔍 FindFile gRPC query for ${merkleHex.substring(0, 16)}...`);
+    metrics.findFileQueries++;
+    
+    // Query FindFile - returns provider URLs that have this file
+    const command = `
+      grpcurl -plaintext -d '{"merkle":"${merkleHex}"}' ${JACKAL_GRPC_ENDPOINT} canine_chain.storage.Query/FindFile | jq -r '.providerIps[]' 2>/dev/null
+    `;
+    
+    const { stdout } = await execPromise(command, {
+      timeout: FINDFILE_TIMEOUT,
+      maxBuffer: 1024 * 1024
+    });
+    
+    const providerUrls = stdout
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line.startsWith('http://') || line.startsWith('https://'));
+    
+    if (providerUrls.length === 0) {
+      console.log(`   ⚠️  FindFile returned no providers`);
+      return [];
+    }
+    
+    console.log(`   ✅ FindFile found ${providerUrls.length} providers with this file`);
+    
+    // Cache the result
+    findFileCache.set(merkleHex, {
+      providers: providerUrls,
+      timestamp: Date.now()
+    });
+    
+    saveFindFileCache();
+    
+    return providerUrls;
+    
+  } catch (err) {
+    console.log(`   ⚠️  FindFile query failed: ${err.message}`);
+    return [];
+  }
+}
+
+/**
  * Download file using tiered provider approach
+ * 🎯 NEW v3.0.0: Try FindFile() first for targeted queries, fallback to Tier 1 broadcast
  */
 async function downloadFile(merkleHex, rangeHeader = null) {
   console.log(`\n📥 Downloading merkle: ${merkleHex.substring(0, 16)}...${rangeHeader ? ` (Range: ${rangeHeader})` : ''}`);
   
   const attemptLog = {
-    tier1: { tried: 0, errors: [] },
-    grpc: { tried: 0, errors: [] }
+    findFile: { tried: 0, errors: [], used: false },
+    tier1: { tried: 0, errors: [] }
   };
   
-  // Try all 16 Tier 1 providers in parallel
-  console.log(`🚀 Tier 1: Trying ${TIER1_PROVIDERS.length} known providers...`);
+  // 🎯 STEP 1: Try FindFile() if enabled
+  if (USE_FINDFILE) {
+    try {
+      const findFileProviders = await findFileProviders(merkleHex);
+      
+      if (findFileProviders.length > 0) {
+        console.log(`🎯 FindFile: Trying ${findFileProviders.length} targeted providers...`);
+        attemptLog.findFile.tried = findFileProviders.length;
+        attemptLog.findFile.used = true;
+        
+        try {
+          const result = await tryProvidersParallel(findFileProviders, merkleHex, TIER1_TIMEOUT, rangeHeader);
+          console.log(`✅ FindFile success from: ${result.provider}`);
+          
+          result.attemptLog = attemptLog;
+          result.attemptLog.findFile.errors = result.attemptDetails
+            .filter(a => !a.success)
+            .map(a => `${a.provider}: ${a.error}`);
+          
+          return result;
+        } catch (err) {
+          console.log(`⚠️  FindFile providers failed: ${err.message}`);
+          if (err.details) {
+            attemptLog.findFile.errors = err.details.map(d => `${d.provider}: ${d.error}`);
+          }
+          metrics.findFileFallbacks++;
+          // Continue to Tier 1 fallback
+        }
+      } else {
+        console.log(`⚠️  FindFile returned no providers - falling back to Tier 1`);
+        metrics.findFileFallbacks++;
+      }
+    } catch (err) {
+      console.log(`⚠️  FindFile query error: ${err.message}`);
+      metrics.findFileFallbacks++;
+    }
+  }
+  
+  // 🚀 STEP 2: Fallback to Tier 1 broadcast (original behavior)
+  console.log(`🚀 Tier 1 Fallback: Trying ${TIER1_PROVIDERS.length} known providers...`);
   attemptLog.tier1.tried = TIER1_PROVIDERS.length;
   
   try {
     const result = await tryProvidersParallel(TIER1_PROVIDERS, merkleHex, TIER1_TIMEOUT, rangeHeader);
     console.log(`✅ Tier 1 success from: ${result.provider}`);
     
-    // Add attempt details to result
     result.attemptLog = attemptLog;
     result.attemptLog.tier1.errors = result.attemptDetails
       .filter(a => !a.success)
@@ -792,50 +928,7 @@ async function downloadFile(merkleHex, rangeHeader = null) {
     
     return result;
   } catch (err) {
-    console.log(`⚠️  Tier 1 failed: ${err.message}`);
-    if (err.details) {
-      attemptLog.tier1.errors = err.details.map(d => `${d.provider}: ${d.error}`);
-    }
-  }
-  
-  // Tier 1 failed - Query gRPC as fallback
-  console.log(`🌐 Fallback: Querying gRPC for additional providers...`);
-  const grpcProviders = await getActiveProvidersFromGRPC();
-  
-  if (grpcProviders.length === 0) {
-    const error = new Error('No active providers available from gRPC');
-    error.attemptLog = attemptLog;
-    throw error;
-  }
-  
-  // Try gRPC providers (excluding ones already in Tier 1)
-  const fallbackProviders = grpcProviders.filter(p => !TIER1_PROVIDERS.includes(p));
-  
-  if (fallbackProviders.length === 0) {
-    console.log(`⚠️  No additional providers found in gRPC (all already tried in Tier 1)`);
-    const error = new Error('File not available from any provider');
-    error.attemptLog = attemptLog;
-    throw error;
-  }
-  
-  console.log(`🔄 Fallback: Trying ${fallbackProviders.length} additional providers from gRPC...`);
-  attemptLog.grpc.tried = fallbackProviders.length;
-  
-  try {
-    const result = await tryProvidersParallel(fallbackProviders, merkleHex, PROVIDER_TIMEOUT, rangeHeader);
-    console.log(`✅ gRPC fallback success from: ${result.provider}`);
-    
-    result.attemptLog = attemptLog;
-    result.attemptLog.grpc.errors = result.attemptDetails
-      .filter(a => !a.success)
-      .map(a => `${a.provider}: ${a.error}`);
-    
-    return result;
-  } catch (err) {
-    console.log(`❌ gRPC fallback failed: ${err.message}`);
-    if (err.details) {
-      attemptLog.grpc.errors = err.details.map(d => `${d.provider}: ${d.error}`);
-    }
+    console.log(`❌ All download attempts failed`);
     
     const error = new Error('File not available from any provider');
     error.attemptLog = attemptLog;
@@ -988,12 +1081,18 @@ app.get('/health', async (req, res) => {
   
   const uptime = Math.floor((Date.now() - metrics.startTime) / 1000);
   
-  res.json({ 
+    res.json({ 
     status: 'ok',
-    version: '2.2.1',
+    version: '3.0.0-findfile',
     service: 'radiant-gateway',
     uptime_seconds: uptime,
-    method: 'tier1-16-providers-grpc-fallback-smart-streaming-full-persistence',
+    method: 'findfile-targeted-query-tier1-fallback',
+    findfile: {
+      enabled: USE_FINDFILE,
+      cache_entries: findFileCache.size,
+      timeout_ms: FINDFILE_TIMEOUT,
+      cache_ttl_hours: FINDFILE_CACHE_TTL / 1000 / 60 / 60
+    },
     cache: {
       enabled: CACHE_ENABLED,
       size_gb: cacheSize,
@@ -1017,7 +1116,8 @@ app.get('/health', async (req, res) => {
       metrics_persisted: true,
       grpc_cache_persisted: true,
       provider_health_persisted: true,
-      cache_access_times_persisted: true
+      cache_access_times_persisted: true,
+      findfile_cache_persisted: true
     },
     config: {
       provider_timeout_ms: PROVIDER_TIMEOUT,
@@ -1041,9 +1141,13 @@ app.get('/metrics', (req, res) => {
     ? (metrics.requestTimes.reduce((a, b) => a + b, 0) / metrics.requestTimes.length).toFixed(2) + 'ms'
     : 'N/A';
   
+  const findFileSuccessRate = metrics.findFileQueries > 0
+    ? (((metrics.findFileQueries - metrics.findFileFallbacks) / metrics.findFileQueries) * 100).toFixed(2) + '%'
+    : 'N/A';
+  
   res.json({
     service: 'radiant-gateway',
-    version: '2.2.1',
+    version: '3.0.0-findfile',
     uptime_seconds: uptime,
     requests: {
       total: metrics.totalRequests,
@@ -1054,6 +1158,13 @@ app.get('/metrics', (req, res) => {
       inflight_requests: inflightRequests.size,
       video_streams: metrics.videoStreams,
       large_file_downloads: metrics.largeFileDownloads
+    },
+    findfile: {
+      enabled: USE_FINDFILE,
+      queries: metrics.findFileQueries,
+      cache_hits: metrics.findFileHits,
+      fallbacks_to_tier1: metrics.findFileFallbacks,
+      success_rate: findFileSuccessRate
     },
     providers: {
       total_successes: metrics.providerSuccesses,
@@ -1254,6 +1365,10 @@ app.get('/file/:identifier', async (req, res) => {
       statusCode = result.statusCode || 200;
       responseHeaders = result.headers || {};
       
+      // 🎯 Track if FindFile was used
+      const usedFindFile = result.attemptLog?.findFile?.used || false;
+      responseHeaders.usedFindFile = usedFindFile;
+      
       // Save to cache only if it's a full file (not range request)
       if (!rangeHeader && statusCode === 200) {
         saveToCache(merkleHex, fileData);
@@ -1328,6 +1443,7 @@ app.get('/file/:identifier', async (req, res) => {
     res.setHeader('X-Identifier-Type', isMerkleHex ? 'merkleHex' : 'CID');
     res.setHeader('X-File-Size-MB', fileSizeMB.toFixed(2));
     res.setHeader('X-Streaming-Mode', streamingMode);
+    res.setHeader('X-FindFile-Used', responseHeaders.usedFindFile ? 'true' : 'false'); // 🎯 NEW
     
     // 🌐 Signal to Cloudflare Worker whether to bypass cache
     if (bypassCloudflare) {
