@@ -1,11 +1,12 @@
-// radiant-gateway-grpc.js v3.0.0 - FindFile Edition
+// radiant-gateway-grpc.js v3.0.0 - FindFile Edition (FIXED)
 // Routes Jackal merkle hashes through storage provider network
 // ✅ LRU cache eviction, Range requests, Request deduplication, Health persistence
 // ✅ 16-provider Tier 1, 24hr gRPC caching, Detailed error responses
 // ✅ Smart streaming: Videos always stream, large non-videos force download
 // ✅ Cloudflare hybrid: Small files cached, large files bypass
 // ✅ FULL PERSISTENCE: Metrics, gRPC cache, and all state persists across restarts
-// 🎯 NEW v3.0.0: FindFile() gRPC query - targets specific providers that have each file
+// 🎯 v3.0.0: FindFile() gRPC query - targets specific providers that have each file
+// 🔧 CRITICAL FIX: FindFile now converts hex to base64 (required by Jackal blockchain)
 
 const express = require('express');
 const cors = require('cors');
@@ -57,7 +58,7 @@ const TIER1_PROVIDERS = [
   'https://jackal3.spantobi1910.com',
   'https://jackal5.nkbblocks.com',
   'https://jackal-storage4.badgerbite.io',
-  'https://jackal.nodesferatu.site'
+  'https://jackal.nodesferatu.site', 'https://jackal-storage3.badgerbite.io'
 ];
 
 // Cache directory
@@ -286,7 +287,7 @@ function saveAllState() {
 
 // ==================== INITIALIZATION ====================
 
-console.log('\n🚀 Initializing Radiant Gateway v3.0.0 (FindFile Edition)...\n');
+console.log('\n🚀 Initializing Radiant Gateway v3.0.0 (FindFile Edition - FIXED)...\n');
 
 // Ensure cache directory exists
 if (CACHE_ENABLED && !fs.existsSync(CACHE_DIR)) {
@@ -780,9 +781,9 @@ async function tryProvidersParallel(providers, merkleHex, timeoutMs = PROVIDER_T
 }
 
 /**
- * 🎯 NEW: Query FindFile() gRPC to find which providers have a specific file
+ * 🎯 CRITICAL FIX: Query FindFile() gRPC to find which providers have a specific file
  * Returns array of provider URLs that have this file
- * MOVED BEFORE downloadFile to fix hoisting issue
+ * NOW PROPERLY CONVERTS HEX TO BASE64 (required by Jackal blockchain)
  */
 async function findFileProviders(merkleHex) {
   // Check cache first
@@ -797,9 +798,13 @@ async function findFileProviders(merkleHex) {
     console.log(`   🔍 FindFile gRPC query for ${merkleHex.substring(0, 16)}...`);
     metrics.findFileQueries++;
     
-    // Query FindFile - returns provider URLs that have this file
+    // ✅ CRITICAL FIX: Convert hex to base64 (Jackal blockchain expects base64!)
+    const merkleBase64 = Buffer.from(merkleHex, 'hex').toString('base64');
+    console.log(`   🔄 Converted hex to base64: ${merkleBase64.substring(0, 20)}...`);
+    
+    // Query FindFile with BASE64-encoded merkle (not hex!)
     const command = `
-      grpcurl -plaintext -d '{"merkle":"${merkleHex}"}' ${JACKAL_GRPC_ENDPOINT} canine_chain.storage.Query/FindFile | jq -r '.providerIps[]' 2>/dev/null
+      grpcurl -plaintext -d '{"merkle":"${merkleBase64}"}' ${JACKAL_GRPC_ENDPOINT} canine_chain.storage.Query/FindFile | jq -r '.providerIps[]' 2>/dev/null
     `;
     
     const { stdout } = await execPromise(command, {
@@ -866,7 +871,7 @@ async function downloadFileWithDedup(merkleHex, rangeHeader = null) {
 
 /**
  * Download file using tiered provider approach
- * 🎯 NEW v3.0.0: Try FindFile() first for targeted queries, fallback to Tier 1 broadcast
+ * 🎯 v3.0.0 FIXED: Try FindFile() first for targeted queries, fallback to Tier 1 broadcast
  */
 async function downloadFile(merkleHex, rangeHeader = null) {
   console.log(`\n📥 Downloading merkle: ${merkleHex.substring(0, 16)}...${rangeHeader ? ` (Range: ${rangeHeader})` : ''}`);
@@ -1083,17 +1088,19 @@ app.get('/health', async (req, res) => {
   
   const uptime = Math.floor((Date.now() - metrics.startTime) / 1000);
   
-    res.json({ 
+  res.json({ 
     status: 'ok',
-    version: '3.0.0-findfile',
+    version: '3.0.0-findfile-fixed',
     service: 'radiant-gateway',
     uptime_seconds: uptime,
     method: 'findfile-targeted-query-tier1-fallback',
+    fix: 'hex-to-base64-conversion-enabled',
     findfile: {
       enabled: USE_FINDFILE,
       cache_entries: findFileCache.size,
       timeout_ms: FINDFILE_TIMEOUT,
-      cache_ttl_hours: FINDFILE_CACHE_TTL / 1000 / 60 / 60
+      cache_ttl_hours: FINDFILE_CACHE_TTL / 1000 / 60 / 60,
+      base64_conversion: 'ENABLED'
     },
     cache: {
       enabled: CACHE_ENABLED,
@@ -1149,7 +1156,7 @@ app.get('/metrics', (req, res) => {
   
   res.json({
     service: 'radiant-gateway',
-    version: '3.0.0-findfile',
+    version: '3.0.0-findfile-fixed',
     uptime_seconds: uptime,
     requests: {
       total: metrics.totalRequests,
@@ -1166,7 +1173,8 @@ app.get('/metrics', (req, res) => {
       queries: metrics.findFileQueries,
       cache_hits: metrics.findFileHits,
       fallbacks_to_tier1: metrics.findFileFallbacks,
-      success_rate: findFileSuccessRate
+      success_rate: findFileSuccessRate,
+      base64_conversion: 'ENABLED'
     },
     providers: {
       total_successes: metrics.providerSuccesses,
@@ -1310,6 +1318,7 @@ app.delete('/cache/clear', (req, res) => {
  * ✅ Smart streaming: Videos always stream, large non-videos force download
  * ✅ Cloudflare bypass header for large files (>90MB)
  * ✅ Full persistence: All state survives Docker restarts
+ * 🎯 FindFile with hex-to-base64 conversion (FIXED!)
  */
 app.get('/file/:identifier', async (req, res) => {
   const startTime = Date.now();
@@ -1488,14 +1497,14 @@ app.get('/file/:identifier', async (req, res) => {
 // ==================== GRACEFUL SHUTDOWN ====================
 
 process.on('SIGTERM', () => {
-  console.log('\n📴 Received SIGTERM, saving all state...');
+  console.log('\n🔴 Received SIGTERM, saving all state...');
   saveAllState();
   console.log('✅ All state saved, shutting down...');
   process.exit(0);
 });
 
 process.on('SIGINT', () => {
-  console.log('\n📴 Received SIGINT, saving all state...');
+  console.log('\n🔴 Received SIGINT, saving all state...');
   saveAllState();
   console.log('✅ All state saved, shutting down...');
   process.exit(0);
@@ -1505,7 +1514,7 @@ process.on('SIGINT', () => {
 
 app.listen(PORT, () => {
   console.log(`\n${'='.repeat(80)}`);
-  console.log(`🚀 Radiant Gateway v2.2.1 - Smart Racing Edition`);
+  console.log(`🚀 Radiant Gateway v3.0.0 - FindFile Edition (FIXED)`);
   console.log(`${'='.repeat(80)}`);
   console.log(`📡 Server running on port ${PORT}`);
   console.log(`🌐 File endpoint: http://localhost:${PORT}/file/{merkleHex|CID}?name={filename}`);
@@ -1539,6 +1548,8 @@ app.listen(PORT, () => {
   console.log(`   ✅ Smart streaming: Videos always stream, large files auto-download`);
   console.log(`   ✅ Cloudflare hybrid caching support (bypass header for large files)`);
   console.log(`   ✅ FULL PERSISTENCE: All state survives Docker restarts`);
+  console.log(`   🎯 FindFile optimization: Targets specific providers first`);
+  console.log(`   🔧 CRITICAL FIX: Hex-to-Base64 conversion for FindFile queries`);
   console.log(`\n🎬 Streaming Logic:`);
   console.log(`   - Videos (any size): Stream in browser (inline)`);
   console.log(`   - Large videos (>${LARGE_FILE_THRESHOLD_MB}MB): Stream + Cloudflare bypass`);
@@ -1549,7 +1560,8 @@ app.listen(PORT, () => {
   console.log(`   - Cache access times → ${CACHE_ACCESS_FILE}`);
   console.log(`   - Metrics → ${METRICS_FILE}`);
   console.log(`   - gRPC provider cache → ${GRPC_CACHE_FILE}`);
+  console.log(`   - FindFile cache → ${FINDFILE_CACHE_FILE}`);
   console.log(`   - Auto-save every: ${SAVE_INTERVAL / 1000 / 60} minutes`);
-  console.log(`\n✅ Ready to serve files!\n`);
+  console.log(`\n✅ Ready to serve files with optimized FindFile queries!\n`);
   console.log(`${'='.repeat(80)}\n`);
 });
