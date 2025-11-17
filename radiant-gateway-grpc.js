@@ -879,15 +879,15 @@ async function downloadFile(merkleHex, rangeHeader = null) {
   // 🎯 STEP 1: Try FindFile() if enabled
   if (USE_FINDFILE) {
     try {
-      const findFileProviders = await findFileProviders(merkleHex);
+      const providersFromFindFile = await findFileProviders(merkleHex);
       
-      if (findFileProviders.length > 0) {
-        console.log(`🎯 FindFile: Trying ${findFileProviders.length} targeted providers...`);
-        attemptLog.findFile.tried = findFileProviders.length;
+      if (providersFromFindFile.length > 0) {
+        console.log(`🎯 FindFile: Trying ${providersFromFindFile.length} targeted providers...`);
+        attemptLog.findFile.tried = providersFromFindFile.length;
         attemptLog.findFile.used = true;
         
         try {
-          const result = await tryProvidersParallel(findFileProviders, merkleHex, TIER1_TIMEOUT, rangeHeader);
+          const result = await tryProvidersParallel(providersFromFindFile, merkleHex, TIER1_TIMEOUT, rangeHeader);
           console.log(`✅ FindFile success from: ${result.provider}`);
           
           result.attemptLog = attemptLog;
@@ -1041,21 +1041,22 @@ function buildErrorResponse(err, merkleHex, attemptLog = null) {
   if (attemptLog || err.attemptLog) {
     const log = attemptLog || err.attemptLog;
     response.debug = {
-      tier1_providers_tried: log.tier1.tried,
-      tier1_errors: log.tier1.errors.slice(0, 5), // Limit to first 5 to avoid huge responses
-      grpc_providers_tried: log.grpc?.tried || 0,
-      grpc_errors: log.grpc?.errors?.slice(0, 5) || [],
-      total_providers_queried: log.tier1.tried + (log.grpc?.tried || 0),
+      tier1_providers_tried: log.tier1?.tried || 0,
+      tier1_errors: log.tier1?.errors?.slice(0, 5) || [],
+      findfile_providers_tried: log.findFile?.tried || 0,
+      findfile_errors: log.findFile?.errors?.slice(0, 5) || [],
+      findfile_used: log.findFile?.used || false,
+      total_providers_queried: (log.tier1?.tried || 0) + (log.findFile?.tried || 0),
       grpc_cache_used: grpcProviderCache.valid,
       cache_checked: true
     };
     
     // Add suggestions based on error pattern
-    if (log.tier1.errors.length > 0 && log.tier1.errors.every(e => e.includes('timeout'))) {
+    if (log.tier1?.errors?.length > 0 && log.tier1.errors.every(e => e.includes('timeout'))) {
       response.debug.suggestion = 'All providers timed out. Network may be congested. Try again in a moment.';
-    } else if (log.tier1.errors.length > 0 && log.tier1.errors.some(e => e.includes('404'))) {
+    } else if (log.tier1?.errors?.length > 0 && log.tier1.errors.some(e => e.includes('404'))) {
       response.debug.suggestion = 'File not found on providers. It may not exist or is still being replicated.';
-    } else if (log.grpc.tried === 0) {
+    } else if (log.findFile?.tried === 0 && log.tier1?.tried > 0) {
       response.debug.suggestion = 'File not available from known providers. It may be a new upload still replicating.';
     }
   }
