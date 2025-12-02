@@ -1356,6 +1356,62 @@ app.get('/file/:identifier', async (req, res) => {
     let statusCode = 200;
     let responseHeaders = {};
     
+    const fileName = name || `file-${merkleHex.substring(0, 16)}`;
+    const contentType = getContentType(fileName);
+    const safeFileName = sanitizeFilename(fileName);
+    let contentDisposition = 'inline';
+
+    // ============================================================
+    // CACHE-FIRST SHORT-CIRCUIT LOGIC
+    // ============================================================
+
+    if (isInCache(merkleHex)) {
+        console.log(`⚡ Cache hit – skipping provider calls completely`);
+
+        const cachePath = getCachePath(merkleHex);
+        const fileStat = fs.statSync(cachePath);
+        const fileSize = fileStat.size;
+
+        // Handle Range requests from cache
+        if (rangeHeader) {
+            console.log(`🎯 Range request satisfied from LOCAL CACHE`);
+
+            const range = parseRangeHeader(rangeHeader, fileSize);
+            if (!range) {
+                return res.status(416).send('Requested Range Not Satisfiable');
+            }
+
+            const { start, end } = range;
+            const chunkSize = (end - start) + 1;
+
+            res.writeHead(206, {
+                'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+                'Accept-Ranges': 'bytes',
+                'Content-Length': chunkSize,
+                'Content-Type': contentType,
+                'Content-Disposition': `${contentDisposition}; filename="${safeFileName}"`,
+                'X-Provider-Source': 'cache',
+                'X-Streaming-Mode': 'range-from-cache'
+            });
+
+            const stream = fs.createReadStream(cachePath, { start, end });
+            return stream.pipe(res);
+        }
+
+        // Handle full GET from cache
+        console.log(`📦 Full GET satisfied from LOCAL CACHE`);
+        res.writeHead(200, {
+            'Content-Type': contentType,
+            'Content-Length': fileSize,
+            'Content-Disposition': `${contentDisposition}; filename="${safeFileName}"`,
+            'X-Provider-Source': 'cache',
+            'X-Streaming-Mode': 'full-from-cache'
+        });
+
+        const stream = fs.createReadStream(cachePath);
+        return stream.pipe(res);
+    }
+    
     // Check cache first (only for full file requests, not ranges)
     if (!rangeHeader && isInCache(merkleHex)) {
       console.log(`💨 Cache hit!`);
@@ -1387,10 +1443,6 @@ app.get('/file/:identifier', async (req, res) => {
         saveToCache(merkleHex, fileData);
       }
     }
-    
-    const fileName = name || `file-${merkleHex.substring(0, 16)}`;
-    const contentType = getContentType(fileName);
-    const safeFileName = sanitizeFilename(fileName);
 
     const fileSizeMB = fileData.length / (1024 * 1024);
     const isLargeFile = fileSizeMB > LARGE_FILE_THRESHOLD_MB;
@@ -1400,7 +1452,7 @@ app.get('/file/:identifier', async (req, res) => {
     const isPDF = isPdfFile(fileName);
     const isStreamable = isVideo || isAudio || isPDF;
 
-    let contentDisposition = 'inline';
+    contentDisposition = 'inline';
     let bypassCloudflare = false;
     let streamingMode = 'inline';
 
