@@ -1436,18 +1436,49 @@ app.get('/file/:identifier', async (req, res) => {
     
     console.log(`   🎬 Streaming mode: ${streamingMode} (${fileSizeMB.toFixed(2)}MB, ${isVideo ? 'video' : 'non-video'})`);
     
-    // ✅ Handle Range requests
-    if (rangeHeader && isStreamable && statusCode !== 206) {
-      // Client requested range but we got full file (from cache or provider that doesn't support ranges)
-      const range = parseRangeHeader(rangeHeader, fileData.length);
-      if (range) {
-        fileData = fileData.slice(range.start, range.end + 1);
-        statusCode = 206;
-        res.setHeader('Content-Range', `bytes ${range.start}-${range.end}/${fileData.length}`);
-      }
-    } else if (statusCode === 206 && responseHeaders['content-range']) {
-      // Provider returned 206 - pass through their Content-Range header
-      res.setHeader('Content-Range', responseHeaders['content-range']);
+    // ============================================================
+    // RANGE REQUEST HANDLING (SAFE MODE - SERVE FROM CACHE WHEN AVAILABLE)
+    // ============================================================
+
+    // If this is a Range request AND we have a full cached file → serve chunks locally.
+    if (rangeHeader && isInCache(merkleHex)) {
+        console.log(`🎯 Range request satisfied from LOCAL CACHE`);
+
+        const cachePath = getCachePath(merkleHex);
+        const fileStat = fs.statSync(cachePath);
+        const fileSize = fileStat.size;
+
+        const range = parseRangeHeader(rangeHeader, fileSize);
+        if (!range) {
+            return res.status(416).send('Requested Range Not Satisfiable');
+        }
+
+        const { start, end } = range;
+        const chunkSize = (end - start) + 1;
+
+        res.writeHead(206, {
+            'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+            'Accept-Ranges': 'bytes',
+            'Content-Length': chunkSize,
+            'Content-Type': contentType,
+            'Content-Disposition': `${contentDisposition}; filename="${safeFileName}"`,
+            'X-Provider-Source': 'cache',
+            'X-Streaming-Mode': 'range-from-cache'
+        });
+
+        const fileStream = fs.createReadStream(cachePath, { start, end });
+        return fileStream.pipe(res);
+    }
+
+    // ============================================================
+    // FALLBACK: RANGE REQUEST BUT NOT IN CACHE
+    // ============================================================
+
+    // If cache does NOT contain the file, we must fetch from provider.
+    if (rangeHeader && !isInCache(merkleHex)) {
+        console.log(`🌐 Range request - fetching from network provider (not cached yet)...`);
+        // KEEP EXISTING BEHAVIOR HERE
+        // Do NOT change provider racing, FindFile, or network fetch logic.
     }
     
     // Set response headers
