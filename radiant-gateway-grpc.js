@@ -1,11 +1,11 @@
 // radiant-gateway-grpc.js v3.0.1 - FindFile Edition (BASE64 FIX)
 // Routes Jackal merkle hashes through storage provider network
-// âœ… LRU cache eviction, Range requests, Request deduplication, Health persistence
-// âœ… 16-provider Tier 1, 24hr gRPC caching, Detailed error responses
-// âœ… Smart streaming: Videos always stream, large non-videos force download
-// âœ… Cloudflare hybrid: Small files cached, large files bypass
-// âœ… FULL PERSISTENCE: Metrics, gRPC cache, and all state persists across restarts
-// ðŸŽ¯ NEW v3.0.0: FindFile() gRPC query - targets specific providers that have each file
+// ✅ LRU cache eviction, Range requests, Request deduplication, Health persistence
+// ✅ 16-provider Tier 1, 24hr gRPC caching, Detailed error responses
+// ✅ Smart streaming: Videos always stream, large non-videos force download
+// ✅ Cloudflare hybrid: Small files cached, large files bypass
+// ✅ FULL PERSISTENCE: Metrics, gRPC cache, and all state persists across restarts
+// 🎯 NEW v3.0.0: FindFile() gRPC query - targets specific providers that have each file
 
 const express = require('express');
 const cors = require('cors');
@@ -32,14 +32,14 @@ const SAVE_INTERVAL = parseInt(process.env.SAVE_INTERVAL || '300000'); // 5 minu
 const DATA_DIR = process.env.DATA_DIR || './data';
 const GRPC_CACHE_TTL = parseInt(process.env.GRPC_CACHE_TTL || '86400000'); // 24 hours
 
-// ðŸŽ¯ NEW: FindFile configuration
+// 🎯 NEW: FindFile configuration
 const USE_FINDFILE = process.env.USE_FINDFILE !== 'false'; // Enable FindFile optimization
 const FINDFILE_TIMEOUT = parseInt(process.env.FINDFILE_TIMEOUT || '3000'); // FindFile query timeout
 const FINDFILE_CACHE_TTL = 3600000; // 1 hour cache for FindFile results
 
 // ==================== FIXED CONFIGURATION ====================
 
-// âœ… ALL 16 KNOWN PROVIDERS IN TIER 1 (Fast parallel polling)
+// ✅ ALL 16 KNOWN PROVIDERS IN TIER 1 (Fast parallel polling)
 const TIER1_PROVIDERS = [
   // Squirrellogic (original 2)
   'https://jklstorage1.squirrellogic.com',
@@ -63,7 +63,7 @@ const TIER1_PROVIDERS = [
 // Cache directory
 const CACHE_DIR = path.join(__dirname, 'cache');
 
-// ðŸŽ¬ Video extensions for streaming detection
+// 🎬 Video extensions for streaming detection
 const VIDEO_EXTENSIONS = ['mp4', 'webm', 'mkv', 'avi', 'mov', 'ogg', 'm4v', 'flv', 'wmv'];
 
 // ==================== PERSISTENT FILE PATHS ====================
@@ -77,30 +77,30 @@ const HEALTH_FILE = path.join(DATA_DIR, 'provider-health.json');
 const CACHE_ACCESS_FILE = path.join(DATA_DIR, 'cache-access-times.json');
 const METRICS_FILE = path.join(DATA_DIR, 'metrics.json');
 const GRPC_CACHE_FILE = path.join(DATA_DIR, 'grpc-provider-cache.json');
-const FINDFILE_CACHE_FILE = path.join(DATA_DIR, 'findfile-cache.json'); // ðŸŽ¯ NEW
+const FINDFILE_CACHE_FILE = path.join(DATA_DIR, 'findfile-cache.json'); // 🎯 NEW
 
 // ==================== RUNTIME STATE ====================
 
 // Provider health tracking
 const providerHealth = new Map();
 
-// âœ… LRU Cache tracking
+// ✅ LRU Cache tracking
 const cacheAccessTimes = new Map(); // merkleHex -> timestamp
 
-// âœ… Request deduplication tracking (in-memory only - intentionally not persisted)
+// ✅ Request deduplication tracking (in-memory only - intentionally not persisted)
 const inflightRequests = new Map(); // merkleHex -> Promise
 
-// ðŸŽ¯ NEW: FindFile cache (merkleHex -> provider URLs)
+// 🎯 NEW: FindFile cache (merkleHex -> provider URLs)
 const findFileCache = new Map(); // merkleHex -> {providers: [], timestamp}
 
-// âœ… gRPC provider cache
+// ✅ gRPC provider cache
 let grpcProviderCache = {
   providers: [],
   timestamp: 0,
   valid: false
 };
 
-// âœ… Metrics tracking (now persistent!)
+// ✅ Metrics tracking (now persistent!)
 let metrics = {
   totalRequests: 0,
   cacheHits: 0,
@@ -108,9 +108,9 @@ let metrics = {
   providerSuccesses: 0,
   providerFailures: 0,
   grpcQueries: 0,
-  findFileQueries: 0,    // ðŸŽ¯ NEW
-  findFileHits: 0,       // ðŸŽ¯ NEW  
-  findFileFallbacks: 0,  // ðŸŽ¯ NEW
+  findFileQueries: 0,    // 🎯 NEW
+  findFileHits: 0,       // 🎯 NEW  
+  findFileFallbacks: 0,  // 🎯 NEW
   startTime: Date.now(),
   errorsByType: {},
   requestTimes: [], // Rolling window of last 100 request times
@@ -131,10 +131,10 @@ function loadProviderHealth() {
       Object.entries(data).forEach(([url, stats]) => {
         providerHealth.set(url, stats);
       });
-      console.log(`âœ… Loaded health data for ${providerHealth.size} providers`);
+      console.log(`✅ Loaded health data for ${providerHealth.size} providers`);
     }
   } catch (err) {
-    console.warn('âš ï¸  Could not load provider health:', err.message);
+    console.warn('⚠️  Could not load provider health:', err.message);
   }
 }
 
@@ -145,9 +145,9 @@ function saveProviderHealth() {
   try {
     const data = Object.fromEntries(providerHealth);
     fs.writeFileSync(HEALTH_FILE, JSON.stringify(data, null, 2));
-    console.log(`ðŸ’¾ Saved health data for ${providerHealth.size} providers`);
+    console.log(`💾 Saved health data for ${providerHealth.size} providers`);
   } catch (err) {
-    console.error('âŒ Could not save provider health:', err.message);
+    console.error('❌ Could not save provider health:', err.message);
   }
 }
 
@@ -161,10 +161,10 @@ function loadCacheAccessTimes() {
       Object.entries(data).forEach(([hash, time]) => {
         cacheAccessTimes.set(hash, time);
       });
-      console.log(`âœ… Loaded access times for ${cacheAccessTimes.size} cached files`);
+      console.log(`✅ Loaded access times for ${cacheAccessTimes.size} cached files`);
     }
   } catch (err) {
-    console.warn('âš ï¸  Could not load cache access times:', err.message);
+    console.warn('⚠️  Could not load cache access times:', err.message);
   }
 }
 
@@ -176,7 +176,7 @@ function saveCacheAccessTimes() {
     const data = Object.fromEntries(cacheAccessTimes);
     fs.writeFileSync(CACHE_ACCESS_FILE, JSON.stringify(data, null, 2));
   } catch (err) {
-    console.error('âŒ Could not save cache access times:', err.message);
+    console.error('❌ Could not save cache access times:', err.message);
   }
 }
 
@@ -191,10 +191,10 @@ function loadMetrics() {
       metrics = { ...metrics, ...data };
       // Update start time to when we loaded (not when last saved)
       metrics.startTime = Date.now() - (data.lastSaved ? (Date.now() - data.lastSaved) : 0);
-      console.log(`âœ… Loaded metrics (${metrics.totalRequests} total requests)`);
+      console.log(`✅ Loaded metrics (${metrics.totalRequests} total requests)`);
     }
   } catch (err) {
-    console.warn('âš ï¸  Could not load metrics:', err.message);
+    console.warn('⚠️  Could not load metrics:', err.message);
   }
 }
 
@@ -206,7 +206,7 @@ function saveMetrics() {
     metrics.lastSaved = Date.now();
     fs.writeFileSync(METRICS_FILE, JSON.stringify(metrics, null, 2));
   } catch (err) {
-    console.error('âŒ Could not save metrics:', err.message);
+    console.error('❌ Could not save metrics:', err.message);
   }
 }
 
@@ -222,14 +222,14 @@ function loadGRPCCache() {
       // Check if cache is still valid
       const age = Date.now() - grpcProviderCache.timestamp;
       if (age > GRPC_CACHE_TTL) {
-        console.log(`âš ï¸  gRPC cache expired (${Math.floor(age / 1000 / 60 / 60)}h old)`);
+        console.log(`⚠️  gRPC cache expired (${Math.floor(age / 1000 / 60 / 60)}h old)`);
         grpcProviderCache.valid = false;
       } else {
-        console.log(`âœ… Loaded gRPC cache (${grpcProviderCache.providers.length} providers, ${Math.floor((GRPC_CACHE_TTL - age) / 1000 / 60 / 60)}h remaining)`);
+        console.log(`✅ Loaded gRPC cache (${grpcProviderCache.providers.length} providers, ${Math.floor((GRPC_CACHE_TTL - age) / 1000 / 60 / 60)}h remaining)`);
       }
     }
   } catch (err) {
-    console.warn('âš ï¸  Could not load gRPC cache:', err.message);
+    console.warn('⚠️  Could not load gRPC cache:', err.message);
   }
 }
 
@@ -240,12 +240,12 @@ function saveGRPCCache() {
   try {
     fs.writeFileSync(GRPC_CACHE_FILE, JSON.stringify(grpcProviderCache, null, 2));
   } catch (err) {
-    console.error('âŒ Could not save gRPC cache:', err.message);
+    console.error('❌ Could not save gRPC cache:', err.message);
   }
 }
 
 /**
- * ðŸŽ¯ Load FindFile cache from disk
+ * 🎯 Load FindFile cache from disk
  */
 function loadFindFileCache() {
   try {
@@ -254,22 +254,22 @@ function loadFindFileCache() {
       Object.entries(data).forEach(([hash, entry]) => {
         findFileCache.set(hash, entry);
       });
-      console.log(`âœ… Loaded FindFile cache for ${findFileCache.size} files`);
+      console.log(`✅ Loaded FindFile cache for ${findFileCache.size} files`);
     }
   } catch (err) {
-    console.warn('âš ï¸  Could not load FindFile cache:', err.message);
+    console.warn('⚠️  Could not load FindFile cache:', err.message);
   }
 }
 
 /**
- * ðŸŽ¯ Save FindFile cache to disk
+ * 🎯 Save FindFile cache to disk
  */
 function saveFindFileCache() {
   try {
     const data = Object.fromEntries(findFileCache);
     fs.writeFileSync(FINDFILE_CACHE_FILE, JSON.stringify(data, null, 2));
   } catch (err) {
-    console.error('âŒ Could not save FindFile cache:', err.message);
+    console.error('❌ Could not save FindFile cache:', err.message);
   }
 }
 
@@ -281,17 +281,17 @@ function saveAllState() {
   saveCacheAccessTimes();
   saveMetrics();
   saveGRPCCache();
-  saveFindFileCache(); // ðŸŽ¯ NEW
+  saveFindFileCache(); // 🎯 NEW
 }
 
 // ==================== INITIALIZATION ====================
 
-console.log('\nðŸš€ Initializing Radiant Gateway v3.0.1 (FindFile - BASE64 FIX)...\n');
+console.log('\n🚀 Initializing Radiant Gateway v3.0.1 (FindFile - BASE64 FIX)...\n');
 
 // Ensure cache directory exists
 if (CACHE_ENABLED && !fs.existsSync(CACHE_DIR)) {
   fs.mkdirSync(CACHE_DIR, { recursive: true });
-  console.log(`ðŸ“ Cache directory created: ${CACHE_DIR}`);
+  console.log(`📁 Cache directory created: ${CACHE_DIR}`);
 }
 
 // Load all persistent state
@@ -299,12 +299,12 @@ loadProviderHealth();
 loadCacheAccessTimes();
 loadMetrics();
 loadGRPCCache();
-loadFindFileCache(); // ðŸŽ¯ NEW
+loadFindFileCache(); // 🎯 NEW
 
 // Periodic saving
 setInterval(saveAllState, SAVE_INTERVAL);
 
-console.log('\nâœ… Initialization complete\n');
+console.log('\n✅ Initialization complete\n');
 
 // Enable CORS
 app.use(cors({
@@ -420,7 +420,7 @@ function evictOldFiles(targetSizeBytes) {
   
   const filesByAge = getCachedFilesByAge();
   
-  console.log(`ðŸ—‘ï¸  LRU Eviction: Need to free ${(needToFree / 1024 / 1024).toFixed(2)} MB`);
+  console.log(`🗑️  LRU Eviction: Need to free ${(needToFree / 1024 / 1024).toFixed(2)} MB`);
   
   for (const file of filesByAge) {
     if (freed >= needToFree) break;
@@ -435,7 +435,7 @@ function evictOldFiles(targetSizeBytes) {
     }
   }
   
-  console.log(`âœ… Freed ${(freed / 1024 / 1024).toFixed(2)} MB from cache`);
+  console.log(`✅ Freed ${(freed / 1024 / 1024).toFixed(2)} MB from cache`);
   saveCacheAccessTimes(); // Persist changes
 }
 
@@ -460,7 +460,7 @@ function getFromCache(merkleHex) {
     cacheAccessTimes.set(merkleHex, Date.now());
     return data;
   } catch (err) {
-    console.error(`âš ï¸  Cache read error: ${err.message}`);
+    console.error(`⚠️  Cache read error: ${err.message}`);
     return null;
   }
 }
@@ -486,9 +486,9 @@ function saveToCache(merkleHex, data) {
   try {
     fs.writeFileSync(cachePath, data);
     cacheAccessTimes.set(merkleHex, Date.now());
-    console.log(`ðŸ’¾ Cached: ${merkleHex.substring(0, 16)}... (${(data.length / 1024 / 1024).toFixed(2)} MB)`);
+    console.log(`💾 Cached: ${merkleHex.substring(0, 16)}... (${(data.length / 1024 / 1024).toFixed(2)} MB)`);
   } catch (err) {
-    console.error(`âš ï¸  Cache write error: ${err.message}`);
+    console.error(`⚠️  Cache write error: ${err.message}`);
   }
 }
 
@@ -531,12 +531,12 @@ async function getActiveProvidersFromGRPC(forceRefresh = false) {
   // Check cache first
   const now = Date.now();
   if (!forceRefresh && grpcProviderCache.valid && (now - grpcProviderCache.timestamp) < GRPC_CACHE_TTL) {
-    console.log(`ðŸ“¦ Using cached gRPC providers (${grpcProviderCache.providers.length} providers, ${Math.floor((GRPC_CACHE_TTL - (now - grpcProviderCache.timestamp)) / 1000 / 60 / 60)}h remaining)`);
+    console.log(`📦 Using cached gRPC providers (${grpcProviderCache.providers.length} providers, ${Math.floor((GRPC_CACHE_TTL - (now - grpcProviderCache.timestamp)) / 1000 / 60 / 60)}h remaining)`);
     return grpcProviderCache.providers;
   }
   
   try {
-    console.log(`ðŸ“¡ Fetching providers via gRPC (${JACKAL_GRPC_ENDPOINT})...`);
+    console.log(`📡 Fetching providers via gRPC (${JACKAL_GRPC_ENDPOINT})...`);
     metrics.grpcQueries++;
     
     const command = `
@@ -556,7 +556,7 @@ async function getActiveProvidersFromGRPC(forceRefresh = false) {
       .filter(line => line.startsWith('http://') || line.startsWith('https://'));
     
     if (providers.length === 0) {
-      console.warn('âš ï¸  No providers found from gRPC query');
+      console.warn('⚠️  No providers found from gRPC query');
       return grpcProviderCache.providers; // Return old cache if available
     }
     
@@ -570,19 +570,19 @@ async function getActiveProvidersFromGRPC(forceRefresh = false) {
     // Save to disk
     saveGRPCCache();
     
-    console.log(`âœ… Found ${providers.length} active providers from gRPC (cached for 24h, persisted to disk)`);
+    console.log(`✅ Found ${providers.length} active providers from gRPC (cached for 24h, persisted to disk)`);
     return providers;
     
   } catch (err) {
-    console.error('âš ï¸  gRPC provider query failed:', err.message);
+    console.error('⚠️  gRPC provider query failed:', err.message);
     
     if (err.message.includes('grpcurl: command not found') || err.message.includes('jq: command not found')) {
-      console.error('âŒ Required tools not installed: grpcurl and/or jq');
+      console.error('❌ Required tools not installed: grpcurl and/or jq');
     }
     
     // Return cached providers if available
     if (grpcProviderCache.valid) {
-      console.log(`ðŸ“¦ Falling back to cached providers (${grpcProviderCache.providers.length} providers)`);
+      console.log(`📦 Falling back to cached providers (${grpcProviderCache.providers.length} providers)`);
       return grpcProviderCache.providers;
     }
     
@@ -592,7 +592,7 @@ async function getActiveProvidersFromGRPC(forceRefresh = false) {
 
 // Query gRPC on startup (will load from disk if available)
 (async () => {
-  console.log('ðŸš€ Initializing provider list...');
+  console.log('🚀 Initializing provider list...');
   if (!grpcProviderCache.valid || grpcProviderCache.providers.length === 0) {
     await getActiveProvidersFromGRPC();
   }
@@ -666,11 +666,11 @@ async function tryProvider(providerUrl, merkleHex, timeoutMs = PROVIDER_TIMEOUT,
     }
     
     updateProviderHealth(providerUrl, true);
-    console.log(`   âœ… Success: ${providerUrl} (${(data.length / 1024 / 1024).toFixed(2)} MB)`);
+    console.log(`   ✅ Success: ${providerUrl} (${(data.length / 1024 / 1024).toFixed(2)} MB)`);
     return { data, provider: providerUrl, statusCode: result.statusCode, headers: result.headers };
   } catch (err) {
     updateProviderHealth(providerUrl, false, err.message);
-    console.log(`   âŒ Failed: ${providerUrl} - ${err.message}`);
+    console.log(`   ❌ Failed: ${providerUrl} - ${err.message}`);
     throw err;
   }
 }
@@ -687,19 +687,19 @@ async function tryProvidersParallel(providers, merkleHex, timeoutMs = PROVIDER_T
     throw new Error('No providers available');
   }
   
-  console.log(`ðŸ”„ Racing ${providers.length} providers in parallel...`);
+  console.log(`🔄 Racing ${providers.length} providers in parallel...`);
   
   // Validation function - same checks as before
   const isValidResponse = (data, provider) => {
     // Check 1: Must have data
     if (!data || data.length === 0) {
-      console.log(`   âš ï¸  Invalid: ${provider} - Empty response`);
+      console.log(`   ⚠️  Invalid: ${provider} - Empty response`);
       return false;
     }
     
     // Check 2: Must not be HTML error page (existing validation)
     if (data.length < 1000 && data.toString('utf8').toLowerCase().includes('<!doctype html>')) {
-      console.log(`   âš ï¸  Invalid: ${provider} - HTML error page`);
+      console.log(`   ⚠️  Invalid: ${provider} - HTML error page`);
       return false;
     }
     
@@ -708,7 +708,7 @@ async function tryProvidersParallel(providers, merkleHex, timeoutMs = PROVIDER_T
       try {
         const text = data.toString('utf8').toLowerCase();
         if (text.includes('"error"') || text.includes('"message"')) {
-          console.log(`   âš ï¸  Invalid: ${provider} - Error JSON`);
+          console.log(`   ⚠️  Invalid: ${provider} - Error JSON`);
           return false;
         }
       } catch (e) {
@@ -755,7 +755,7 @@ async function tryProvidersParallel(providers, merkleHex, timeoutMs = PROVIDER_T
           
           // Valid response! This is our winner
           successFound = true;
-          console.log(`ðŸ† Race won by: ${provider} (validated âœ“)`);
+          console.log(`🏆 Race won by: ${provider} (validated ✓)`);
           
           // Add attemptDetails for backward compatibility
           result.attemptDetails = results;
@@ -780,7 +780,7 @@ async function tryProvidersParallel(providers, merkleHex, timeoutMs = PROVIDER_T
 }
 
 /**
- * ðŸŽ¯ NEW: Query FindFile() gRPC to find which providers have a specific file
+ * 🎯 NEW: Query FindFile() gRPC to find which providers have a specific file
  * Returns array of provider URLs that have this file
  * MOVED BEFORE downloadFile to fix hoisting issue
  */
@@ -788,7 +788,7 @@ async function findFileProviders(merkleHex) {
   // Check cache first
   const cached = findFileCache.get(merkleHex);
   if (cached && (Date.now() - cached.timestamp) < FINDFILE_CACHE_TTL) {
-    console.log(`   ðŸ“¦ FindFile cache hit (${cached.providers.length} providers)`);
+    console.log(`   📦 FindFile cache hit (${cached.providers.length} providers)`);
     metrics.findFileHits++;
     return cached.providers;
   }
@@ -817,11 +817,11 @@ async function findFileProviders(merkleHex) {
       .filter(line => line.startsWith('http://') || line.startsWith('https://'));
     
     if (providerUrls.length === 0) {
-      console.log(`   âš ï¸  FindFile returned no providers`);
+      console.log(`   ⚠️  FindFile returned no providers`);
       return [];
     }
     
-    console.log(`   âœ… FindFile found ${providerUrls.length} providers with this file`);
+    console.log(`   ✅ FindFile found ${providerUrls.length} providers with this file`);
     
     // Cache the result
     findFileCache.set(merkleHex, {
@@ -834,7 +834,7 @@ async function findFileProviders(merkleHex) {
     return providerUrls;
     
   } catch (err) {
-    console.log(`   âš ï¸  FindFile query failed: ${err.message}`);
+    console.log(`   ⚠️  FindFile query failed: ${err.message}`);
     return [];
   }
 }
@@ -843,56 +843,52 @@ async function findFileProviders(merkleHex) {
  * Download file with request deduplication
  * If same file is requested multiple times, download once and share result
  */
-async function downloadFileWithDedup(merkleHex, rangeHeader = null) {
-  const cacheKey = rangeHeader ? `${merkleHex}:${rangeHeader}` : merkleHex;
-  
-  // Check if request is already in flight
+async function downloadFileWithDedup(merkleHex) {
+  const cacheKey = merkleHex;
+
   if (inflightRequests.has(cacheKey)) {
-    console.log(`ðŸ”— Deduplicating request for ${merkleHex.substring(0, 16)}...`);
+    console.log(`📎 Deduplicating request for ${merkleHex.substring(0, 16)}...`);
     return await inflightRequests.get(cacheKey);
   }
-  
-  // Create new download promise
+
   const downloadPromise = (async () => {
     try {
-      return await downloadFile(merkleHex, rangeHeader);
+      return await downloadFile(merkleHex); // ALWAYS full file from provider
     } finally {
-      // Remove from inflight after completion
       inflightRequests.delete(cacheKey);
     }
   })();
-  
-  // Track inflight request
+
   inflightRequests.set(cacheKey, downloadPromise);
-  
+
   return await downloadPromise;
 }
 
 /**
  * Download file using tiered provider approach
- * ðŸŽ¯ NEW v3.0.0: Try FindFile() first for targeted queries, fallback to Tier 1 broadcast
+ * 🎯 NEW v3.0.0: Try FindFile() first for targeted queries, fallback to Tier 1 broadcast
  */
 async function downloadFile(merkleHex, rangeHeader = null) {
-  console.log(`\nðŸ“¥ Downloading merkle: ${merkleHex.substring(0, 16)}...${rangeHeader ? ` (Range: ${rangeHeader})` : ''}`);
+  console.log(`\n📥 Downloading merkle: ${merkleHex.substring(0, 16)}...${rangeHeader ? ` (Range: ${rangeHeader})` : ''}`);
   
   const attemptLog = {
     findFile: { tried: 0, errors: [], used: false },
     tier1: { tried: 0, errors: [] }
   };
   
-  // ðŸŽ¯ STEP 1: Try FindFile() if enabled
+  // 🎯 STEP 1: Try FindFile() if enabled
   if (USE_FINDFILE) {
     try {
       const providersFromFindFile = await findFileProviders(merkleHex);
       
       if (providersFromFindFile.length > 0) {
-        console.log(`ðŸŽ¯ FindFile: Trying ${providersFromFindFile.length} targeted providers...`);
+        console.log(`🎯 FindFile: Trying ${providersFromFindFile.length} targeted providers...`);
         attemptLog.findFile.tried = providersFromFindFile.length;
         attemptLog.findFile.used = true;
         
         try {
           const result = await tryProvidersParallel(providersFromFindFile, merkleHex, TIER1_TIMEOUT, rangeHeader);
-          console.log(`âœ… FindFile success from: ${result.provider}`);
+          console.log(`✅ FindFile success from: ${result.provider}`);
           
           result.attemptLog = attemptLog;
           result.attemptLog.findFile.errors = result.attemptDetails
@@ -901,7 +897,7 @@ async function downloadFile(merkleHex, rangeHeader = null) {
           
           return result;
         } catch (err) {
-          console.log(`âš ï¸  FindFile providers failed: ${err.message}`);
+          console.log(`⚠️  FindFile providers failed: ${err.message}`);
           if (err.details) {
             attemptLog.findFile.errors = err.details.map(d => `${d.provider}: ${d.error}`);
           }
@@ -909,22 +905,22 @@ async function downloadFile(merkleHex, rangeHeader = null) {
           // Continue to Tier 1 fallback
         }
       } else {
-        console.log(`âš ï¸  FindFile returned no providers - falling back to Tier 1`);
+        console.log(`⚠️  FindFile returned no providers - falling back to Tier 1`);
         metrics.findFileFallbacks++;
       }
     } catch (err) {
-      console.log(`âš ï¸  FindFile query error: ${err.message}`);
+      console.log(`⚠️  FindFile query error: ${err.message}`);
       metrics.findFileFallbacks++;
     }
   }
   
-  // ðŸš€ STEP 2: Fallback to Tier 1 broadcast (original behavior)
-  console.log(`ðŸš€ Tier 1 Fallback: Trying ${TIER1_PROVIDERS.length} known providers...`);
+  // 🚀 STEP 2: Fallback to Tier 1 broadcast (original behavior)
+  console.log(`🚀 Tier 1 Fallback: Trying ${TIER1_PROVIDERS.length} known providers...`);
   attemptLog.tier1.tried = TIER1_PROVIDERS.length;
   
   try {
     const result = await tryProvidersParallel(TIER1_PROVIDERS, merkleHex, TIER1_TIMEOUT, rangeHeader);
-    console.log(`âœ… Tier 1 success from: ${result.provider}`);
+    console.log(`✅ Tier 1 success from: ${result.provider}`);
     
     result.attemptLog = attemptLog;
     result.attemptLog.tier1.errors = result.attemptDetails
@@ -933,7 +929,7 @@ async function downloadFile(merkleHex, rangeHeader = null) {
     
     return result;
   } catch (err) {
-    console.log(`âŒ All download attempts failed`);
+    console.log(`❌ All download attempts failed`);
     
     const error = new Error('File not available from any provider');
     error.attemptLog = attemptLog;
@@ -1012,6 +1008,17 @@ function getContentType(filename) {
 function isVideoFile(filename) {
   const ext = filename.split('.').pop()?.toLowerCase();
   return VIDEO_EXTENSIONS.includes(ext);
+}
+
+function isAudioFile(filename) {
+  const ext = filename.split('.').pop()?.toLowerCase();
+  const audioExtensions = ['mp3', 'wav', 'ogg', 'flac', 'm4a'];
+  return audioExtensions.includes(ext);
+}
+
+function isPdfFile(filename) {
+  const ext = filename.split('.').pop()?.toLowerCase();
+  return ext === 'pdf';
 }
 
 /**
@@ -1291,7 +1298,7 @@ app.delete('/cache/clear', (req, res) => {
     deleteRecursive(CACHE_DIR);
     cacheAccessTimes.clear();
     saveCacheAccessTimes();
-    console.log('ðŸ—‘ï¸  Cache cleared');
+    console.log('🗑️  Cache cleared');
     
     res.json({ 
       success: true, 
@@ -1307,13 +1314,13 @@ app.delete('/cache/clear', (req, res) => {
 
 /**
  * Main file download endpoint
- * âœ… Supports both CID and merkleHex (forward compatible)
- * âœ… Supports Range requests for video streaming
- * âœ… LRU cache with automatic eviction
- * âœ… Request deduplication
- * âœ… Smart streaming: Videos always stream, large non-videos force download
- * âœ… Cloudflare bypass header for large files (>90MB)
- * âœ… Full persistence: All state survives Docker restarts
+ * ✅ Supports both CID and merkleHex (forward compatible)
+ * ✅ Supports Range requests for video streaming
+ * ✅ LRU cache with automatic eviction
+ * ✅ Request deduplication
+ * ✅ Smart streaming: Videos always stream, large non-videos force download
+ * ✅ Cloudflare bypass header for large files (>90MB)
+ * ✅ Full persistence: All state survives Docker restarts
  */
 app.get('/file/:identifier', async (req, res) => {
   const startTime = Date.now();
@@ -1323,7 +1330,7 @@ app.get('/file/:identifier', async (req, res) => {
   const { name } = req.query;
   const rangeHeader = req.headers.range;
   
-  // âœ… FORWARD COMPATIBLE: Accept both 64-char merkleHex AND 59-char CID
+  // ✅ FORWARD COMPATIBLE: Accept both 64-char merkleHex AND 59-char CID
   const isMerkleHex = /^[a-f0-9]{64}$/i.test(identifier);
   const isCID = identifier.startsWith('bafy') && identifier.length === 59;
   
@@ -1339,9 +1346,9 @@ app.get('/file/:identifier', async (req, res) => {
   // Use identifier as-is (works for both merkleHex and CID)
   const merkleHex = identifier;
   
-  console.log(`\nðŸ“¥ Request for file: ${merkleHex.substring(0, 16)}... (${isMerkleHex ? 'merkleHex' : 'CID'})`);
-  if (name) console.log(`ðŸ“„ Filename: ${name}`);
-  if (rangeHeader) console.log(`ðŸ“ Range: ${rangeHeader}`);
+  console.log(`\n📥 Request for file: ${merkleHex.substring(0, 16)}... (${isMerkleHex ? 'merkleHex' : 'CID'})`);
+  if (name) console.log(`📄 Filename: ${name}`);
+  if (rangeHeader) console.log(`📏 Range: ${rangeHeader}`);
   
   try {
     let fileData;
@@ -1351,15 +1358,15 @@ app.get('/file/:identifier', async (req, res) => {
     
     // Check cache first (only for full file requests, not ranges)
     if (!rangeHeader && isInCache(merkleHex)) {
-      console.log(`ðŸ’¨ Cache hit!`);
+      console.log(`💨 Cache hit!`);
       fileData = getFromCache(merkleHex);
       source = 'cache';
       metrics.cacheHits++;
     } else {
       if (rangeHeader) {
-        console.log(`ðŸŒ Range request - fetching from network...`);
+        console.log(`🌐 Range request - fetching from network...`);
       } else {
-        console.log(`ðŸŒ Cache miss - downloading from network...`);
+        console.log(`🌐 Cache miss - downloading from network...`);
       }
       
       metrics.cacheMisses++;
@@ -1371,45 +1378,51 @@ app.get('/file/:identifier', async (req, res) => {
       statusCode = result.statusCode || 200;
       responseHeaders = result.headers || {};
       
-      // ðŸŽ¯ Track if FindFile was used
+      // 🎯 Track if FindFile was used
       const usedFindFile = result.attemptLog?.findFile?.used || false;
       responseHeaders.usedFindFile = usedFindFile;
       
       // Save to cache only if it's a full file (not range request)
-      if (!rangeHeader && statusCode === 200) {
+      if (statusCode === 200) {
         saveToCache(merkleHex, fileData);
       }
     }
     
-    // Determine filename and content type
     const fileName = name || `file-${merkleHex.substring(0, 16)}`;
     const contentType = getContentType(fileName);
     const safeFileName = sanitizeFilename(fileName);
-    
-    // ðŸŽ¬ Calculate file size and check if it's a video
+
     const fileSizeMB = fileData.length / (1024 * 1024);
     const isLargeFile = fileSizeMB > LARGE_FILE_THRESHOLD_MB;
+
     const isVideo = isVideoFile(fileName);
-    
-    // ðŸŽ¯ Smart streaming/download decision
-    let contentDisposition = 'inline'; // Default: view in browser
+    const isAudio = isAudioFile(fileName);
+    const isPDF = isPdfFile(fileName);
+    const isStreamable = isVideo || isAudio || isPDF;
+
+    let contentDisposition = 'inline';
     let bypassCloudflare = false;
     let streamingMode = 'inline';
-    
+
     if (isVideo) {
-      // Videos ALWAYS stream (even if large)
       contentDisposition = 'inline';
       streamingMode = 'video-stream';
-      bypassCloudflare = isLargeFile; // Large videos bypass Cloudflare cache
+      bypassCloudflare = isLargeFile;
       if (isLargeFile) metrics.videoStreams++;
+    } else if (isAudio) {
+      contentDisposition = 'inline';
+      streamingMode = 'audio-stream';
+      bypassCloudflare = isLargeFile;
+    } else if (isPDF) {
+      contentDisposition = 'inline';
+      streamingMode = 'pdf-stream';
+      bypassCloudflare = isLargeFile;
     } else if (isLargeFile) {
-      // Large non-video files force download
       contentDisposition = 'attachment';
       streamingMode = 'force-download';
       bypassCloudflare = true;
       metrics.largeFileDownloads++;
     } else {
-      // Small non-video files: view in browser, cache on Cloudflare
       contentDisposition = 'inline';
       streamingMode = 'inline-small';
       bypassCloudflare = false;
@@ -1421,10 +1434,10 @@ app.get('/file/:identifier', async (req, res) => {
       streamingMode = 'user-requested';
     }
     
-    console.log(`   ðŸŽ¬ Streaming mode: ${streamingMode} (${fileSizeMB.toFixed(2)}MB, ${isVideo ? 'video' : 'non-video'})`);
+    console.log(`   🎬 Streaming mode: ${streamingMode} (${fileSizeMB.toFixed(2)}MB, ${isVideo ? 'video' : 'non-video'})`);
     
-    // âœ… Handle Range requests
-    if (rangeHeader && statusCode !== 206) {
+    // ✅ Handle Range requests
+    if (rangeHeader && isStreamable && statusCode !== 206) {
       // Client requested range but we got full file (from cache or provider that doesn't support ranges)
       const range = parseRangeHeader(rangeHeader, fileData.length);
       if (range) {
@@ -1449,9 +1462,9 @@ app.get('/file/:identifier', async (req, res) => {
     res.setHeader('X-Identifier-Type', isMerkleHex ? 'merkleHex' : 'CID');
     res.setHeader('X-File-Size-MB', fileSizeMB.toFixed(2));
     res.setHeader('X-Streaming-Mode', streamingMode);
-    res.setHeader('X-FindFile-Used', responseHeaders.usedFindFile ? 'true' : 'false'); // ðŸŽ¯ NEW
+    res.setHeader('X-FindFile-Used', responseHeaders.usedFindFile ? 'true' : 'false'); // 🎯 NEW
     
-    // ðŸŒ Signal to Cloudflare Worker whether to bypass cache
+    // 🌐 Signal to Cloudflare Worker whether to bypass cache
     if (bypassCloudflare) {
       res.setHeader('X-Cloudflare-Bypass', 'true');
       res.setHeader('X-Bypass-Reason', isVideo ? 'large-video' : 'large-file');
@@ -1460,7 +1473,7 @@ app.get('/file/:identifier', async (req, res) => {
     }
     
     const duration = Date.now() - startTime;
-    console.log(`âœ… Serving: ${fileName} (${fileSizeMB.toFixed(2)} MB) from ${source} (${duration}ms)`);
+    console.log(`✅ Serving: ${fileName} (${fileSizeMB.toFixed(2)} MB) from ${source} (${duration}ms)`);
     console.log(`   Content-Type: ${contentType}`);
     console.log(`   Status: ${statusCode}${statusCode === 206 ? ' Partial Content' : ''}`);
     console.log(`   Disposition: ${contentDisposition}`);
@@ -1470,7 +1483,7 @@ app.get('/file/:identifier', async (req, res) => {
     
   } catch (err) {
     const duration = Date.now() - startTime;
-    console.error(`âŒ Error (${duration}ms):`, err.message, '\n');
+    console.error(`❌ Error (${duration}ms):`, err.message, '\n');
     
     // Build detailed error response
     const errorResponse = buildErrorResponse(err, merkleHex, err.attemptLog);
@@ -1492,16 +1505,16 @@ app.get('/file/:identifier', async (req, res) => {
 // ==================== GRACEFUL SHUTDOWN ====================
 
 process.on('SIGTERM', () => {
-  console.log('\nðŸ“´ Received SIGTERM, saving all state...');
+  console.log('\n📴 Received SIGTERM, saving all state...');
   saveAllState();
-  console.log('âœ… All state saved, shutting down...');
+  console.log('✅ All state saved, shutting down...');
   process.exit(0);
 });
 
 process.on('SIGINT', () => {
-  console.log('\nðŸ“´ Received SIGINT, saving all state...');
+  console.log('\n📴 Received SIGINT, saving all state...');
   saveAllState();
-  console.log('âœ… All state saved, shutting down...');
+  console.log('✅ All state saved, shutting down...');
   process.exit(0);
 });
 
@@ -1509,16 +1522,16 @@ process.on('SIGINT', () => {
 
 app.listen(PORT, () => {
   console.log(`\n${'='.repeat(80)}`);
-  console.log(`ðŸš€ Radiant Gateway v2.2.1 - Smart Racing Edition`);
+  console.log(`🚀 Radiant Gateway v2.2.1 - Smart Racing Edition`);
   console.log(`${'='.repeat(80)}`);
-  console.log(`ðŸ“¡ Server running on port ${PORT}`);
-  console.log(`ðŸŒ File endpoint: http://localhost:${PORT}/file/{merkleHex|CID}?name={filename}`);
-  console.log(`ðŸ’Š Health check: http://localhost:${PORT}/health`);
-  console.log(`ðŸ“Š Metrics: http://localhost:${PORT}/metrics`);
-  console.log(`ðŸ“ˆ Cache stats: http://localhost:${PORT}/cache/stats`);
-  console.log(`ðŸ¥ Provider health: http://localhost:${PORT}/providers/health`);
-  console.log(`ðŸ”„ Refresh providers: POST http://localhost:${PORT}/providers/refresh`);
-  console.log(`\nðŸ”§ Configuration:`);
+  console.log(`📡 Server running on port ${PORT}`);
+  console.log(`🌐 File endpoint: http://localhost:${PORT}/file/{merkleHex|CID}?name={filename}`);
+  console.log(`💊 Health check: http://localhost:${PORT}/health`);
+  console.log(`📊 Metrics: http://localhost:${PORT}/metrics`);
+  console.log(`📈 Cache stats: http://localhost:${PORT}/cache/stats`);
+  console.log(`🏥 Provider health: http://localhost:${PORT}/providers/health`);
+  console.log(`🔄 Refresh providers: POST http://localhost:${PORT}/providers/refresh`);
+  console.log(`\n🔧 Configuration:`);
   console.log(`   - Tier 1 providers: ${TIER1_PROVIDERS.length}`);
   console.log(`   - gRPC endpoint: ${JACKAL_GRPC_ENDPOINT}`);
   console.log(`   - gRPC cache TTL: ${GRPC_CACHE_TTL / 1000 / 60 / 60} hours`);
@@ -1531,29 +1544,29 @@ app.listen(PORT, () => {
   console.log(`   - Large file threshold: ${LARGE_FILE_THRESHOLD_MB}MB`);
   console.log(`   - State save interval: ${SAVE_INTERVAL / 1000 / 60} minutes`);
   console.log(`   - Data directory: ${DATA_DIR}`);
-  console.log(`\nâœ¨ Features:`);
-  console.log(`   âœ… Accepts both CID and merkleHex (forward compatible)`);
-  console.log(`   âœ… Automatic LRU cache eviction`);
-  console.log(`   âœ… Video streaming support (Range requests)`);
-  console.log(`   âœ… Request deduplication (prevents duplicate downloads)`);
-  console.log(`   âœ… Provider health tracking (persisted to disk)`);
-  console.log(`   âœ… 24-hour gRPC caching (persisted to disk)`);
-  console.log(`   âœ… Detailed error responses (with debug info)`);
-  console.log(`   âœ… Comprehensive metrics tracking (persisted to disk)`);
-  console.log(`   âœ… Smart streaming: Videos always stream, large files auto-download`);
-  console.log(`   âœ… Cloudflare hybrid caching support (bypass header for large files)`);
-  console.log(`   âœ… FULL PERSISTENCE: All state survives Docker restarts`);
-  console.log(`\nðŸŽ¬ Streaming Logic:`);
+  console.log(`\n✨ Features:`);
+  console.log(`   ✅ Accepts both CID and merkleHex (forward compatible)`);
+  console.log(`   ✅ Automatic LRU cache eviction`);
+  console.log(`   ✅ Video streaming support (Range requests)`);
+  console.log(`   ✅ Request deduplication (prevents duplicate downloads)`);
+  console.log(`   ✅ Provider health tracking (persisted to disk)`);
+  console.log(`   ✅ 24-hour gRPC caching (persisted to disk)`);
+  console.log(`   ✅ Detailed error responses (with debug info)`);
+  console.log(`   ✅ Comprehensive metrics tracking (persisted to disk)`);
+  console.log(`   ✅ Smart streaming: Videos always stream, large files auto-download`);
+  console.log(`   ✅ Cloudflare hybrid caching support (bypass header for large files)`);
+  console.log(`   ✅ FULL PERSISTENCE: All state survives Docker restarts`);
+  console.log(`\n🎬 Streaming Logic:`);
   console.log(`   - Videos (any size): Stream in browser (inline)`);
   console.log(`   - Large videos (>${LARGE_FILE_THRESHOLD_MB}MB): Stream + Cloudflare bypass`);
   console.log(`   - Non-video <${LARGE_FILE_THRESHOLD_MB}MB: View in browser + Cloudflare cache`);
   console.log(`   - Non-video >${LARGE_FILE_THRESHOLD_MB}MB: Force download + Cloudflare bypass`);
-  console.log(`\nðŸ’¾ Persistence:`);
-  console.log(`   - Provider health â†’ ${HEALTH_FILE}`);
-  console.log(`   - Cache access times â†’ ${CACHE_ACCESS_FILE}`);
-  console.log(`   - Metrics â†’ ${METRICS_FILE}`);
-  console.log(`   - gRPC provider cache â†’ ${GRPC_CACHE_FILE}`);
+  console.log(`\n💾 Persistence:`);
+  console.log(`   - Provider health → ${HEALTH_FILE}`);
+  console.log(`   - Cache access times → ${CACHE_ACCESS_FILE}`);
+  console.log(`   - Metrics → ${METRICS_FILE}`);
+  console.log(`   - gRPC provider cache → ${GRPC_CACHE_FILE}`);
   console.log(`   - Auto-save every: ${SAVE_INTERVAL / 1000 / 60} minutes`);
-  console.log(`\nâœ… Ready to serve files!\n`);
+  console.log(`\n✅ Ready to serve files!\n`);
   console.log(`${'='.repeat(80)}\n`);
 });
