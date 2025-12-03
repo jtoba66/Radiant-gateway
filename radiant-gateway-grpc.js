@@ -1322,6 +1322,145 @@ app.delete('/cache/clear', (req, res) => {
  * ✅ Cloudflare bypass header for large files (>90MB)
  * ✅ Full persistence: All state survives Docker restarts
  */
+
+// HEAD endpoint for Cloudflare + social preview bots (X, Telegram, Discord)
+// - DOES NOT touch Jackal providers
+// - Uses local cache if available to derive size
+// - Returns fast, header-only response for bots and the Cloudflare Worker
+app.head('/file/:identifier', async (req, res) => {
+  try {
+    const { identifier } = req.params;
+    const { name } = req.query;
+
+    const isMerkleHex = /^[a-f0-9]{64}$/i.test(identifier);
+    const isCID = identifier.startsWith('bafy') && identifier.length === 59;
+
+    // Invalid identifier: respond 400 with no body
+    if (!isMerkleHex && !isCID) {
+      res.status(400);
+      return res.end();
+    }
+
+    const merkleHex = identifier;
+
+    const fileName = name || `file-${merkleHex.substring(0, 16)}`;
+    const contentType = getContentType(fileName);
+    const safeFileName = sanitizeFilename(fileName);
+
+    const isVideo = isVideoFile(fileName);
+    const isAudio = isAudioFile(fileName);
+    const isPDF = isPdfFile(fileName);
+
+    let sizeBytes = 0;
+    let sizeMB = 0;
+    let inCache = false;
+
+    // Only inspect local disk cache – never hit providers on HEAD
+    if (isInCache(merkleHex)) {
+      try {
+        const cachePath = getCachePath(merkleHex);
+        const stat = fs.statSync(cachePath);
+        sizeBytes = stat.size;
+        sizeMB = sizeBytes / (1024 * 1024);
+        inCache = true;
+      } catch (e) {
+        sizeBytes = 0;
+        sizeMB = 0;
+        inCache = false;
+      }
+    }
+
+    const isLarge = sizeMB > LARGE_FILE_THRESHOLD_MB;
+
+    // Mirror streaming / disposition logic from GET, but only using cached size info
+    let contentDisposition = 'inline';
+    let streamingMode = 'inline-small';
+    let bypassCloudflare = false;
+    let bypassReason = 'size-unknown';
+
+    if (isVideo) {
+      streamingMode = 'video-stream';
+      contentDisposition = 'inline';
+      if (isLarge) {
+        bypassCloudflare = true;
+        bypassReason = 'large-video';
+      } else {
+        bypassCloudflare = false;
+        bypassReason = inCache ? 'small-video-cached' : 'small-video-unknown-size';
+      }
+    } else if (isAudio) {
+      streamingMode = 'audio-stream';
+      contentDisposition = 'inline';
+      if (isLarge) {
+        bypassCloudflare = true;
+        bypassReason = 'large-audio';
+      } else {
+        bypassCloudflare = false;
+        bypassReason = inCache ? 'small-audio-cached' : 'small-audio-unknown-size';
+      }
+    } else if (isPDF) {
+      streamingMode = 'pdf-stream';
+      contentDisposition = 'inline';
+      if (isLarge) {
+        bypassCloudflare = true;
+        bypassReason = 'large-pdf';
+      } else {
+        bypassCloudflare = false;
+        bypassReason = inCache ? 'small-pdf-cached' : 'small-pdf-unknown-size';
+      }
+    } else {
+      if (isLarge && sizeMB > 0) {
+        // Non-video large file: same idea as GET → force download + bypass
+        streamingMode = 'force-download';
+        contentDisposition = 'attachment';
+        bypassCloudflare = true;
+        bypassReason = 'large-file';
+      } else {
+        streamingMode = 'inline-small';
+        contentDisposition = 'inline';
+        bypassCloudflare = false;
+        bypassReason = inCache ? 'small-file-cached' : 'size-unknown';
+      }
+    }
+
+    // Standard headers (no body)
+    res.setHeader('Content-Type', contentType);
+    if (sizeBytes > 0) {
+      res.setHeader('Content-Length', String(sizeBytes));
+    }
+    res.setHeader(
+      'Content-Disposition',
+      `${contentDisposition}; filename="${safeFileName}"`
+    );
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Accept-Ranges', 'bytes');
+
+    // Extra metadata for debugging / clients / bots
+    res.setHeader('X-Identifier-Type', isMerkleHex ? 'merkleHex' : 'CID');
+    res.setHeader('X-File-Size-MB', sizeMB.toFixed(2));
+    res.setHeader('X-Streaming-Mode', streamingMode);
+    res.setHeader('X-Provider-Source', inCache ? 'cache' : 'unknown');
+
+    // Critical for Cloudflare Worker logic
+    res.setHeader('X-Cloudflare-Bypass', bypassCloudflare ? 'true' : 'false');
+    res.setHeader('X-Bypass-Reason', bypassReason);
+
+    // Important: HEAD must end with no body
+    return res.status(200).end();
+  } catch (err) {
+    // Fail SAFE: tell Cloudflare not to cache if HEAD logic errors
+    try {
+      res.setHeader('X-Cloudflare-Bypass', 'true');
+      res.setHeader('X-Bypass-Reason', 'head-error');
+    } catch (e) {
+      // ignore header failures
+    }
+    res.status(500);
+    return res.end();
+  }
+});
+
 app.get('/file/:identifier', async (req, res) => {
   const startTime = Date.now();
   metrics.totalRequests++;
