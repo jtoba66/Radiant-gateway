@@ -1462,6 +1462,7 @@ app.head('/file/:identifier', async (req, res) => {
 });
 
 app.get('/file/:identifier', async (req, res) => {
+  if (res.headersSent) return;
   const startTime = Date.now();
   metrics.totalRequests++;
   
@@ -1474,6 +1475,7 @@ app.get('/file/:identifier', async (req, res) => {
   const isCID = identifier.startsWith('bafy') && identifier.length === 59;
   
   if (!isMerkleHex && !isCID) {
+    if (res.headersSent) return;
     return res.status(400).json({ 
       error: 'Invalid identifier',
       message: 'Identifier must be either 64-char merkleHex or 59-char CID (bafy...)',
@@ -1552,26 +1554,34 @@ app.get('/file/:identifier', async (req, res) => {
 
             const range = parseRangeHeader(rangeHeader, fileSize);
             if (!range || !isStreamable) {
+                if (res.headersSent) return;
                 return res.status(416).send('Requested Range Not Satisfiable');
             }
 
             const { start, end } = range;
             const chunkSize = (end - start) + 1;
 
-            res.writeHead(206, {
-                'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-                'Accept-Ranges': 'bytes',
-                'Content-Length': chunkSize,
-                'Content-Type': contentType,
-                'Content-Disposition': `${contentDisposition}; filename="${safeFileName}"`,
-                'Cache-Control': 'public, max-age=31536000, immutable',
-                'Access-Control-Allow-Origin': '*',
-                'X-Provider-Source': 'cache',
-                'X-Streaming-Mode': 'range-from-cache',
-                'X-Identifier-Type': isMerkleHex ? 'merkleHex' : 'CID',
-                'X-File-Size-MB': fileSizeMB.toFixed(2),
-                'X-FindFile-Used': 'false'
-            });
+            if (res.headersSent) return;
+            res.status(206);
+            res.setHeader('Content-Range', `bytes ${start}-${end}/${fileSize}`);
+            res.setHeader('Accept-Ranges', 'bytes');
+            res.setHeader('Content-Length', chunkSize);
+            res.setHeader('Content-Type', contentType);
+            res.setHeader('Content-Disposition', `${contentDisposition}; filename="${safeFileName}"`);
+            res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader('X-Provider-Source', 'cache');
+            res.setHeader('X-Streaming-Mode', 'range-from-cache');
+            res.setHeader('X-Identifier-Type', isMerkleHex ? 'merkleHex' : 'CID');
+            res.setHeader('X-File-Size-MB', fileSizeMB.toFixed(2));
+            res.setHeader('X-FindFile-Used', 'false');
+
+            if (bypassCloudflare) {
+              res.setHeader('X-Cloudflare-Bypass', 'true');
+              res.setHeader('X-Bypass-Reason', isVideo ? 'large-video' : 'large-file');
+            } else {
+              res.setHeader('X-Cloudflare-Bypass', 'false');
+            }
 
             if (bypassCloudflare) {
               res.setHeader('X-Cloudflare-Bypass', 'true');
@@ -1581,24 +1591,25 @@ app.get('/file/:identifier', async (req, res) => {
             }
 
             const stream = fs.createReadStream(cachePath, { start, end });
+            if (res.headersSent) return;
             return stream.pipe(res);
         }
 
         // Handle full GET from cache
         console.log(`📦 Full GET satisfied from LOCAL CACHE`);
-        res.writeHead(200, {
-            'Content-Type': contentType,
-            'Content-Length': fileSize,
-            'Content-Disposition': `${contentDisposition}; filename="${safeFileName}"`,
-            'Cache-Control': 'public, max-age=31536000, immutable',
-            'Access-Control-Allow-Origin': '*',
-            'Accept-Ranges': 'bytes',
-            'X-Provider-Source': 'cache',
-            'X-Streaming-Mode': 'full-from-cache',
-            'X-Identifier-Type': isMerkleHex ? 'merkleHex' : 'CID',
-            'X-File-Size-MB': fileSizeMB.toFixed(2),
-            'X-FindFile-Used': 'false'
-        });
+        if (res.headersSent) return;
+        res.status(200);
+        res.setHeader('Content-Type', contentType);
+        res.setHeader('Content-Length', fileSize);
+        res.setHeader('Content-Disposition', `${contentDisposition}; filename="${safeFileName}"`);
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Accept-Ranges', 'bytes');
+        res.setHeader('X-Provider-Source', 'cache');
+        res.setHeader('X-Streaming-Mode', 'full-from-cache');
+        res.setHeader('X-Identifier-Type', isMerkleHex ? 'merkleHex' : 'CID');
+        res.setHeader('X-File-Size-MB', fileSizeMB.toFixed(2));
+        res.setHeader('X-FindFile-Used', 'false');
 
         if (bypassCloudflare) {
           res.setHeader('X-Cloudflare-Bypass', 'true');
@@ -1608,6 +1619,7 @@ app.get('/file/:identifier', async (req, res) => {
         }
 
         const stream = fs.createReadStream(cachePath);
+        if (res.headersSent) return;
         return stream.pipe(res);
     }
 
@@ -1725,6 +1737,7 @@ app.get('/file/:identifier', async (req, res) => {
     }
     
     // Set response headers
+    if (res.headersSent) return;
     res.status(statusCode);
     res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Length', fileData.length);
@@ -1737,7 +1750,7 @@ app.get('/file/:identifier', async (req, res) => {
     res.setHeader('X-File-Size-MB', fileSizeMB.toFixed(2));
     res.setHeader('X-Streaming-Mode', streamingMode);
     res.setHeader('X-FindFile-Used', responseHeaders.usedFindFile ? 'true' : 'false'); // 🎯 NEW
-    
+
     // 🌐 Signal to Cloudflare Worker whether to bypass cache
     if (bypassCloudflare) {
       res.setHeader('X-Cloudflare-Bypass', 'true');
@@ -1753,6 +1766,7 @@ app.get('/file/:identifier', async (req, res) => {
     console.log(`   Disposition: ${contentDisposition}`);
     console.log(`   Cloudflare Bypass: ${bypassCloudflare}\n`);
     
+    if (res.headersSent) return;
     res.send(fileData);
     
   } catch (err) {
@@ -1772,6 +1786,7 @@ app.get('/file/:identifier', async (req, res) => {
       errorResponse.error = 'Service unavailable';
     }
     
+    if (res.headersSent) return;
     res.status(statusCode).json(errorResponse);
   }
 });
