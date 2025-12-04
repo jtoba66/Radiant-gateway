@@ -22,7 +22,7 @@ RUN npm install --production
 
 # Copy gateway server
 # ⚠️ IMPORTANT: Use your actual filename here
-COPY gatewayserver.js ./
+COPY radiant-gateway-grpc.js ./gatewayserver.js
 # If you renamed the file, use:
 # COPY radiant-gateway-grpc.js ./gatewayserver.js
 
