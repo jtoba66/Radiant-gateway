@@ -843,8 +843,8 @@ async function findFileProviders(merkleHex) {
  * Download file with request deduplication
  * If same file is requested multiple times, download once and share result
  */
-async function downloadFileWithDedup(merkleHex) {
-  const cacheKey = merkleHex;
+async function downloadFileWithDedup(merkleHex, rangeHeader = null) {
+  const cacheKey = `${merkleHex}|${rangeHeader || ''}`;
 
   if (inflightRequests.has(cacheKey)) {
     console.log(`📎 Deduplicating request for ${merkleHex.substring(0, 16)}...`);
@@ -853,7 +853,7 @@ async function downloadFileWithDedup(merkleHex) {
 
   const downloadPromise = (async () => {
     try {
-      return await downloadFile(merkleHex); // ALWAYS full file from provider
+      return await downloadFile(merkleHex, rangeHeader);
     } finally {
       inflightRequests.delete(cacheKey);
     }
@@ -1505,18 +1505,53 @@ app.get('/file/:identifier', async (req, res) => {
     // ============================================================
 
     if (isInCache(merkleHex)) {
+        metrics.cacheHits++;
         console.log(`⚡ Cache hit – skipping provider calls completely`);
 
         const cachePath = getCachePath(merkleHex);
         const fileStat = fs.statSync(cachePath);
         const fileSize = fileStat.size;
+        const fileSizeMB = fileSize / (1024 * 1024);
+        const isLargeFile = fileSizeMB > LARGE_FILE_THRESHOLD_MB;
+
+        const isVideo = isVideoFile(fileName);
+        const isAudio = isAudioFile(fileName);
+        const isPDF = isPdfFile(fileName);
+        const isStreamable = isVideo || isAudio || isPDF;
+
+        let bypassCloudflare = false;
+        let streamingMode = 'inline';
+
+        if (isVideo) {
+          contentDisposition = 'inline';
+          streamingMode = 'video-stream';
+          bypassCloudflare = isLargeFile;
+          if (isLargeFile) metrics.videoStreams++;
+        } else if (isAudio) {
+          contentDisposition = 'inline';
+          streamingMode = 'audio-stream';
+          bypassCloudflare = isLargeFile;
+        } else if (isPDF) {
+          contentDisposition = 'inline';
+          streamingMode = 'pdf-stream';
+          bypassCloudflare = isLargeFile;
+        } else if (isLargeFile) {
+          contentDisposition = 'attachment';
+          streamingMode = 'force-download';
+          bypassCloudflare = true;
+          metrics.largeFileDownloads++;
+        } else {
+          contentDisposition = 'inline';
+          streamingMode = 'inline-small';
+          bypassCloudflare = false;
+        }
 
         // Handle Range requests from cache
         if (rangeHeader) {
             console.log(`🎯 Range request satisfied from LOCAL CACHE`);
 
             const range = parseRangeHeader(rangeHeader, fileSize);
-            if (!range) {
+            if (!range || !isStreamable) {
                 return res.status(416).send('Requested Range Not Satisfiable');
             }
 
@@ -1529,9 +1564,21 @@ app.get('/file/:identifier', async (req, res) => {
                 'Content-Length': chunkSize,
                 'Content-Type': contentType,
                 'Content-Disposition': `${contentDisposition}; filename="${safeFileName}"`,
+                'Cache-Control': 'public, max-age=31536000, immutable',
+                'Access-Control-Allow-Origin': '*',
                 'X-Provider-Source': 'cache',
-                'X-Streaming-Mode': 'range-from-cache'
+                'X-Streaming-Mode': 'range-from-cache',
+                'X-Identifier-Type': isMerkleHex ? 'merkleHex' : 'CID',
+                'X-File-Size-MB': fileSizeMB.toFixed(2),
+                'X-FindFile-Used': 'false'
             });
+
+            if (bypassCloudflare) {
+              res.setHeader('X-Cloudflare-Bypass', 'true');
+              res.setHeader('X-Bypass-Reason', isVideo ? 'large-video' : 'large-file');
+            } else {
+              res.setHeader('X-Cloudflare-Bypass', 'false');
+            }
 
             const stream = fs.createReadStream(cachePath, { start, end });
             return stream.pipe(res);
@@ -1543,44 +1590,49 @@ app.get('/file/:identifier', async (req, res) => {
             'Content-Type': contentType,
             'Content-Length': fileSize,
             'Content-Disposition': `${contentDisposition}; filename="${safeFileName}"`,
+            'Cache-Control': 'public, max-age=31536000, immutable',
+            'Access-Control-Allow-Origin': '*',
+            'Accept-Ranges': 'bytes',
             'X-Provider-Source': 'cache',
-            'X-Streaming-Mode': 'full-from-cache'
+            'X-Streaming-Mode': 'full-from-cache',
+            'X-Identifier-Type': isMerkleHex ? 'merkleHex' : 'CID',
+            'X-File-Size-MB': fileSizeMB.toFixed(2),
+            'X-FindFile-Used': 'false'
         });
+
+        if (bypassCloudflare) {
+          res.setHeader('X-Cloudflare-Bypass', 'true');
+          res.setHeader('X-Bypass-Reason', isVideo ? 'large-video' : 'large-file');
+        } else {
+          res.setHeader('X-Cloudflare-Bypass', 'false');
+        }
 
         const stream = fs.createReadStream(cachePath);
         return stream.pipe(res);
     }
-    
-    // Check cache first (only for full file requests, not ranges)
-    if (!rangeHeader && isInCache(merkleHex)) {
-      console.log(`💨 Cache hit!`);
-      fileData = getFromCache(merkleHex);
-      source = 'cache';
-      metrics.cacheHits++;
+
+    if (rangeHeader) {
+      console.log(`🌐 Range request - fetching from network...`);
     } else {
-      if (rangeHeader) {
-        console.log(`🌐 Range request - fetching from network...`);
-      } else {
-        console.log(`🌐 Cache miss - downloading from network...`);
-      }
-      
-      metrics.cacheMisses++;
-      
-      // Use request deduplication
-      const result = await downloadFileWithDedup(merkleHex, rangeHeader);
-      fileData = result.data;
-      source = `provider:${result.provider}`;
-      statusCode = result.statusCode || 200;
-      responseHeaders = result.headers || {};
-      
-      // 🎯 Track if FindFile was used
-      const usedFindFile = result.attemptLog?.findFile?.used || false;
-      responseHeaders.usedFindFile = usedFindFile;
-      
-      // Save to cache only if it's a full file (not range request)
-      if (statusCode === 200) {
-        saveToCache(merkleHex, fileData);
-      }
+      console.log(`🌐 Cache miss - downloading from network...`);
+    }
+    
+    metrics.cacheMisses++;
+    
+    // Use request deduplication
+    const result = await downloadFileWithDedup(merkleHex, rangeHeader);
+    fileData = result.data;
+    source = `provider:${result.provider}`;
+    statusCode = result.statusCode || 200;
+    responseHeaders = result.headers || {};
+    
+    // 🎯 Track if FindFile was used
+    const usedFindFile = result.attemptLog?.findFile?.used || false;
+    responseHeaders.usedFindFile = usedFindFile;
+    
+    // Save to cache only if it's a full file (not range request)
+    if (statusCode === 200 && !rangeHeader) {
+      saveToCache(merkleHex, fileData);
     }
 
     const fileSizeMB = fileData.length / (1024 * 1024);
