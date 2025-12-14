@@ -1,4 +1,4 @@
-version: '3.8'
+
 
 services:
   gateway:
@@ -12,6 +12,8 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3001
+    env_file:
+      - .env
 
     # 🚀 Persist the ./data folder across rebuilds & restarts
     volumes:
